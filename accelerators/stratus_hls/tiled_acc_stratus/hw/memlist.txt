@@ -1,0 +1,4 @@
+tiled_acc_plm_block_in_dma32 16 64 1w:0r 0w:1r
+tiled_acc_plm_block_out_dma32 16 64 1w:0r 0w:1r
+tiled_acc_plm_block_in_dma64 16 64 1w:0r 0w:1r
+tiled_acc_plm_block_out_dma64 16 64 1w:0r 0w:1r
