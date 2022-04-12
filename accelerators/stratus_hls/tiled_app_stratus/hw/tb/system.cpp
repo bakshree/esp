@@ -95,8 +95,10 @@ void system_t::load_memory()
     out_size = out_words_adj * (num_tiles);
 
     in = new int64_t[in_size];
-    for (int i = 2; i < in_size; i++)
-        in[i] = i;
+    // in[0] = 1;
+    // in[1] = 1;
+    for (int i = 0; i < in_size; i++)
+        in[i] = i+1;
     // for (int i = 0; i < num_tiles; i++)
     //     for (int j = 0; j < tile_size; j++)
     //         in[i * in_words_adj + j] = (int64_t) j;
@@ -107,7 +109,7 @@ void system_t::load_memory()
     // Compute golden output
     gold = new int64_t[out_size];
     for (int i = 0; i < out_size; i++)
-        gold[i] = i;
+        gold[i] = i+3;
     // for (int i = 0; i < num_tiles; i++)
     //     for (int j = 0; j < tile_size; j++)
     //         gold[i * out_words_adj + j] = (int64_t) j;
@@ -127,6 +129,10 @@ void system_t::load_memory()
         mem[i] = data_bv;
     }
 #endif
+
+    sc_dt::sc_bv<DMA_WIDTH> data_bv(1);
+    mem[1] = data_bv;
+    mem[0] = data_bv;
 
     ESP_REPORT_INFO("load memory completed");
 }
