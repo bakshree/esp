@@ -27,9 +27,11 @@ public:
     tiled_app(const sc_module_name& name)
     : esp_accelerator_3P<DMA_WIDTH>(name)
         , cfg("config")
+        , load_store_cfg_done("load_store_cfg_done")
     {
         // Signal binding
         cfg.bind_with(*this);
+	    load_store_cfg_done.bind_with<DMA_WIDTH>(*this);
 
         // Map arrays to memories
         /* <<--plm-bind-->> */
@@ -54,7 +56,15 @@ public:
     // Configure tiled_app
     esp_config_proc cfg;
 
+
+    // Custom handshakes
+    handshake_t load_store_cfg_done;
     // Functions
+
+
+    // Configuration handshakes
+    inline void load_store_cfg_handshake();
+    inline void store_load_cfg_handshake();
 
     // Private local memories
     sc_dt::sc_int<DATA_WIDTH> plm[PLM_IN_WORD];

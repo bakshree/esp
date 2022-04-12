@@ -22,7 +22,7 @@ static unsigned DMA_WORD_PER_BEAT(unsigned _st)
 #define DEV_NAME "sld,tiled_app_stratus"
 
 /* <<--params-->> */
-const int32_t num_tiles = 12;
+const int32_t num_tiles = 1;//12;
 const int32_t tile_size = 1024;
 const int32_t rd_wr_enable = 0;
 

@@ -23,8 +23,8 @@ void system_t::config_proc()
         conf_info_t config;
         // Custom configuration
         /* <<--params-->> */
-        config.num_tiles = num_tiles;
-        config.tile_size = tile_size;
+        config.num_tiles = 1; //num_tiles;
+        config.tile_size = 10; //tile_size;
         config.rd_wr_enable = rd_wr_enable;
 
         wait(); conf_info.write(config);
@@ -91,19 +91,26 @@ void system_t::load_memory()
     out_words_adj = round_up(tile_size, DMA_WORD_PER_BEAT);
 #endif
 
-    in_size = in_words_adj * (num_tiles);
+    in_size = in_words_adj * (num_tiles) + DMA_WORD_PER_BEAT + 1;
     out_size = out_words_adj * (num_tiles);
 
     in = new int64_t[in_size];
-    for (int i = 0; i < num_tiles; i++)
-        for (int j = 0; j < tile_size; j++)
-            in[i * in_words_adj + j] = (int64_t) j;
+    for (int i = 2; i < in_size; i++)
+        in[i] = i;
+    // for (int i = 0; i < num_tiles; i++)
+    //     for (int j = 0; j < tile_size; j++)
+    //         in[i * in_words_adj + j] = (int64_t) j;
+    // for (int i = num_tiles*tile_size; i < in_size; i++)
+    //     in[i ] = 21;
+    //in[in_words_adj * (num_tiles) + DMA_WORD_PER_BEAT] = 1;
 
     // Compute golden output
     gold = new int64_t[out_size];
-    for (int i = 0; i < num_tiles; i++)
-        for (int j = 0; j < tile_size; j++)
-            gold[i * out_words_adj + j] = (int64_t) j;
+    for (int i = 0; i < out_size; i++)
+        gold[i] = i;
+    // for (int i = 0; i < num_tiles; i++)
+    //     for (int j = 0; j < tile_size; j++)
+    //         gold[i * out_words_adj + j] = (int64_t) j;
 
     // Memory initialization:
 #if (DMA_WORD_PER_BEAT == 0)
@@ -157,8 +164,10 @@ int system_t::validate()
 
     for (int i = 0; i < num_tiles; i++)
         for (int j = 0; j < tile_size; j++)
-            if (gold[i * out_words_adj + j] != out[i * out_words_adj + j])
+            if (gold[i * out_words_adj + j] != out[i * out_words_adj + j]){
+                ESP_REPORT_INFO("idx: %u, gold = %u, out = %u", (i * out_words_adj + j), gold[i * out_words_adj + j] , out[i * out_words_adj + j]);
                 errors++;
+            }
 
     delete [] in;
     delete [] out;

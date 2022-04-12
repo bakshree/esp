@@ -18,7 +18,8 @@ void tiled_app::load_input()
         HLS_PROTO("load-reset");
 
         this->reset_load_input();
-
+        
+	    load_store_cfg_done.req.reset_req();
         wait();
     }
 
@@ -48,83 +49,64 @@ void tiled_app::load_input()
             wait();
 
             //bool ping = true;
-            uint32_t offset = 0;
+            uint32_t offset = 2* DMA_WORD_PER_BEAT ; //0;
             uint32_t sp_offset = 0;
 
+            uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT) * num_tiles;
+            uint32_t sync_offset =  0; // DMA_WORD_PER_BEAT + store_offset; 
             // Batching
             for (uint16_t b = 0; b < num_tiles; b++)
             {   
-                // if(rd_wr_enable != 0){
-                //     while(rd_wr_enable) wait(); // wait for read enable
-                // }
-                // else
-                {   // Read synchronizer   
-                    uint64_t data;
-                    uint64_t sync_offset = 12*1024;
-                    dma_info_t dma_info(sync_offset * DMA_BEAT_PER_WORD, DMA_BEAT_PER_WORD, DMA_SIZE);
+                //{   // Read synchronizer   
+                uint64_t data = 1;
+                dma_info_t dma_info2(0, 1, DMA_SIZE);
 
-                    //Read from DMA
-                    this->dma_read_ctrl.put(dma_info);
-                    sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-
-                    //Wait for 0
-                    do {
+                //Read from DMA
+                sc_dt::sc_bv<DMA_WIDTH> dataBvin;
+#ifndef STRATUS_HLS
+	ESP_REPORT_INFO("Before Load sync for tile %u sync_offset %u", b, sync_offset);
+#endif
+                //Wait for 0
+                do {
+                    HLS_UNROLL_LOOP(OFF);
+                    this->dma_read_ctrl.put(dma_info2);
+                    wait();
                     dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
                     wait();
                     data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
-                    }
-                    while(data==0);
-
-                    //Write to DMA
-                    this->dma_write_ctrl.put(dma_info);
-                    sc_dt::sc_bv<DMA_WIDTH> dataBvout;
                     wait();
-                    //write 1
-                    dataBvout.range(DMA_WIDTH - 1, 0) = 1;
-                    this->dma_write_chnl.put(dataBvout);
-                }  
+                    #ifndef STRATUS_HLS
+                        ESP_REPORT_INFO("Looping Load sync for tile %u/%u, data=%lu", b, num_tiles, data);
+                    #endif
+                }
+                while(data==0);
                 wait();
-    #if (DMA_WORD_PER_BEAT == 0)
-                uint32_t length = tile_size;
-    #else
+                //Write to DMA
+                this->dma_write_ctrl.put(dma_info2);
+                sc_dt::sc_bv<DMA_WIDTH> dataBvout;
+                wait();
+                //write 1
+                dataBvout.range(DMA_WIDTH - 1, 0) = 1;
+                this->dma_write_chnl.put(dataBvout);
+                //}  
+                wait();
                 uint32_t length = round_up(tile_size, DMA_WORD_PER_BEAT);
-    #endif
+                #ifndef STRATUS_HLS
+                    ESP_REPORT_INFO("Load sync for rem===%u", length);
+                #endif
                 // Chunking
                 for (int rem = length; rem > 0; rem -= PLM_IN_WORD)
                 {
+                    #ifndef STRATUS_HLS
+                        ESP_REPORT_INFO("Load sync for rem=%u", rem);
+                    #endif
                     wait();
                     // Configure DMA transaction
                     uint32_t len = rem > PLM_IN_WORD ? PLM_IN_WORD : rem;
-    #if (DMA_WORD_PER_BEAT == 0)
-                    // data word is wider than NoC links
-                    dma_info_t dma_info(offset * DMA_BEAT_PER_WORD, len * DMA_BEAT_PER_WORD, DMA_SIZE);
-    #else
                     dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len / DMA_WORD_PER_BEAT, DMA_SIZE);
-    #endif
                     offset += len;
 
                     this->dma_read_ctrl.put(dma_info);
-
-    #if (DMA_WORD_PER_BEAT == 0)
-                    // data word is wider than NoC links
-                    for (uint16_t i = 0; i < len; i++)
-                    {
-                        sc_dt::sc_bv<DATA_WIDTH> dataBv;
-
-                        for (uint16_t k = 0; k < DMA_BEAT_PER_WORD; k++)
-                        {
-                            dataBv.range((k+1) * DMA_WIDTH - 1, k * DMA_WIDTH) = this->dma_read_chnl.get();
-                            wait();
-                        }
-
-                        // Write to PLM
-                        plm[sp_offset + i] = dataBv.to_int64();
-                        // if (ping)
-                        //     plm_in_ping[i] = dataBv.to_int64();
-                        // else
-                        //     plm_in_pong[i] = dataBv.to_int64();
-                    }
-    #else
                     for (uint16_t i = 0; i < len; i += DMA_WORD_PER_BEAT)
                     {
                         // HLS_BREAK_DEP(plm_in_ping);
@@ -147,10 +129,9 @@ void tiled_app::load_input()
                             //     plm_in_pong[i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
                         }
                     }
-    #endif
                 }
                 //this->load_compute_handshake();
-                this->load_store_handshake();
+                this->load_store_cfg_handshake();
                 sp_offset += length;
                 //ping = !ping;
             }
@@ -172,6 +153,7 @@ void tiled_app::store_output()
         HLS_PROTO("store-reset");
 
         this->reset_store_output();
+	    load_store_cfg_done.ack.reset_ack();
 
         // explicit PLM ports reset if any
 
@@ -205,11 +187,7 @@ void tiled_app::store_output()
             wait();
 
             // bool ping = true;
-    #if (DMA_WORD_PER_BEAT == 0)
-            uint32_t store_offset = (tile_size) * num_tiles;
-    #else
-            uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT) * num_tiles;
-    #endif
+            uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT) * num_tiles + 2*DMA_WORD_PER_BEAT;
             uint32_t offset = store_offset;
             uint32_t sp_offset = 0;
 
@@ -217,25 +195,35 @@ void tiled_app::store_output()
             // Batching
             for (uint16_t b = 0; b < num_tiles; b++)
             {
+                this->store_load_cfg_handshake();
                 wait();
                 //
                 // this->store_compute_handshake();
-                { //STORE SYNCHRONIZATION
-                    uint64_t sync_offset = 12*1024;
-                    dma_info_t dma_info(sync_offset * DMA_BEAT_PER_WORD, DMA_BEAT_PER_WORD, DMA_SIZE);
+               // { //STORE SYNCHRONIZATION
+                    uint32_t sync_offset = DMA_WORD_PER_BEAT;
+                    dma_info_t dma_info2(sync_offset, 1, DMA_SIZE);
                     uint64_t data;
                     //Read from DMA
-                    this->dma_read_ctrl.put(dma_info);
                     sc_dt::sc_bv<DMA_WIDTH> dataBvin;
                         //Wait for 0
+
+                    #ifndef STRATUS_HLS
+                        ESP_REPORT_INFO("Before Store sync for tile %u offser %u", b, sync_offset);
+                    #endif
                     do {
+                    this->dma_read_ctrl.put(dma_info2);
+                    wait();
                     dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
                     wait();
                     data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
+                    wait();
+                    #ifndef STRATUS_HLS
+                        ESP_REPORT_INFO("Looping Store sync for tile %u/%u, data=%lu", b, num_tiles, data);
+                    #endif
                     }
                     while(data==0);
                         //Write to DMA
-                    this->dma_write_ctrl.put(dma_info);
+                    this->dma_write_ctrl.put(dma_info2);
                     sc_dt::sc_bv<DMA_WIDTH> dataBvout;
                     wait();
                     //write 1
@@ -243,59 +231,23 @@ void tiled_app::store_output()
                     this->dma_write_chnl.put(dataBvout);
                     // compute == synchronizer    
                     //send the output ready ack
-                }    
-                this->store_load_handshake();
-                //send the output ready req
-                //this->compute_store_handshake();
-
-    #if (DMA_WORD_PER_BEAT == 0)
-                uint32_t length = tile_size;
-    #else
+               // }    
+                
                 uint32_t length = round_up(tile_size, DMA_WORD_PER_BEAT);
-    #endif
+
                 // Chunking
                 for (int rem = length; rem > 0; rem -= PLM_OUT_WORD)
                 {
-
-                    //this->store_compute_handshake();
-
+                    #ifndef STRATUS_HLS
+                        ESP_REPORT_INFO("Store sync for rem=%lu", rem);
+                    #endif
                     // Configure DMA transaction
                     uint32_t len = rem > PLM_OUT_WORD ? PLM_OUT_WORD : rem;
-    #if (DMA_WORD_PER_BEAT == 0)
-                    // data word is wider than NoC links
-                    dma_info_t dma_info(offset * DMA_BEAT_PER_WORD, len * DMA_BEAT_PER_WORD, DMA_SIZE);
-    #else
                     dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len / DMA_WORD_PER_BEAT, DMA_SIZE);
-    #endif
                     offset += len;
 
                     this->dma_write_ctrl.put(dma_info);
-
-    #if (DMA_WORD_PER_BEAT == 0)
-                    // data word is wider than NoC links
-                    for (uint16_t i = 0; i < len; i++)
-                    {
-                        // Read from PLM
-                        sc_dt::sc_int<DATA_WIDTH> data;
-                        wait();
-                        data = plm[i];
-                        // if (ping)
-                        //     data = plm_out_ping[i];
-                        // else
-                        //     data = plm_out_pong[i];
-                        sc_dt::sc_bv<DATA_WIDTH> dataBv(data);
-
-                        uint16_t k = 0;
-                        for (k = 0; k < DMA_BEAT_PER_WORD - 1; k++)
-                        {
-                            this->dma_write_chnl.put(dataBv.range((k+1) * DMA_WIDTH - 1, k * DMA_WIDTH));
-                            wait();
-                        }
-                        // Last beat on the bus does not require wait(), which is
-                        // placed before accessing the PLM
-                        this->dma_write_chnl.put(dataBv.range((k+1) * DMA_WIDTH - 1, k * DMA_WIDTH));
-                    }
-    #else
+   
                     for (uint16_t i = 0; i < len; i += DMA_WORD_PER_BEAT)
                     {
                         sc_dt::sc_bv<DMA_WIDTH> dataBv;
@@ -313,7 +265,6 @@ void tiled_app::store_output()
                         }
                         this->dma_write_chnl.put(dataBv);
                     }
-    #endif
                     //ping = !ping;
                 }
 
@@ -346,127 +297,9 @@ void tiled_app::compute_kernel()
         wait();
     }
 
-    // Config
-    /* <<--params-->> */
-    //int32_t num_tiles;
-    //int32_t tile_size;
-    //int32_t rd_wr_enable;
-    //uint64_t sync_offset = 12*1024;
-    //dma_info_t dma_info(sync_offset * DMA_BEAT_PER_WORD, DMA_BEAT_PER_WORD, DMA_SIZE);
 
-    // {
-    //     HLS_PROTO("compute-config");
-
-    //     cfg.wait_for_config(); // config process
-    //     conf_info_t config = this->conf_info.read();
-
-    //     // User-defined config code
-    //     /* <<--local-params-->> */
-    //     //num_tiles = config.num_tiles;
-    //     //tile_size = config.tile_size;
-    //     rd_wr_enable = config.rd_wr_enable;
-    // }
-
-    //calc sync var loc offset
-    //read modify write
-    // {
-    //     //read flow
-    //     if(rd_wr_enable == 0){
-
-    //         // compute == synchronizer    
-    //         this->compute_load_handshake();
-    //         uint64_t data;
-    //         //dma_info_t dma_info(sync_offset * DMA_BEAT_PER_WORD, DMA_BEAT_PER_WORD, DMA_SIZE);
-
-    //         //Read from DMA
-    //         this->dma_read_ctrl.put(dma_info);
-    //         sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-
-    //         //Wait for 0
-    //         do {
-    //         dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
-    //         wait();
-    //         data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
-    //         }
-    //         while(data==0);
-
-    //         //Write to DMA
-    //         this->dma_write_ctrl.put(dma_info);
-    //         sc_dt::sc_bv<DMA_WIDTH> dataBvout;
-    //         wait();
-    //         //write 1
-    //         dataBvout.range(DMA_WIDTH - 1, 0) = 1;
-    //         this->dma_write_chnl.put(dataBvout);
-    //     }         
-    // }
-
-
-    // {
-    //     //write flow
-    //     if(rd_wr_enable == 1){
-            
-    //         uint64_t data;
-
-           
-    //         //Read from DMA
-    //         this->dma_read_ctrl.put(dma_info);
-    //         sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-
-    //         //Wait for 0
-    //         do {
-    //         dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
-    //         wait();
-    //         data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
-    //         }
-    //         while(data==0);
-
-    //         //Write to DMA
-    //         this->dma_write_ctrl.put(dma_info);
-    //         sc_dt::sc_bv<DMA_WIDTH> dataBvout;
-    //         wait();
-    //         //write 1
-    //         dataBvout.range(DMA_WIDTH - 1, 0) = 1;
-    //         this->dma_write_chnl.put(dataBvout);
-    //         // compute == synchronizer    
-    //         //send the output ready ack
-    //         this->store_compute_handshake();
-    //     }         
-    // }
-
-    // // Compute
-    // bool ping = true;
-    // {
-    //     for (uint16_t b = 0; b < num_tiles; b++)
-    //     {
-    //         uint32_t in_length = tile_size;
-    //         uint32_t out_length = tile_size;
-    //         int out_rem = out_length;
-
-    //         for (int in_rem = in_length; in_rem > 0; in_rem -= PLM_IN_WORD)
-    //         {
-
-    //             uint32_t in_len  = in_rem  > PLM_IN_WORD  ? PLM_IN_WORD  : in_rem;
-    //             uint32_t out_len = out_rem > PLM_OUT_WORD ? PLM_OUT_WORD : out_rem;
-
-    //             this->compute_load_handshake();
-
-    //             // Computing phase implementation
-    //             for (int i = 0; i < in_len; i++) {
-    //                 if (ping)
-    //                     plm_out_ping[i] = plm_in_ping[i];
-    //                 else
-    //                     plm_out_pong[i] = plm_in_pong[i];
-    //             }
-
-    //             out_rem -= PLM_OUT_WORD;
-    //             this->compute_store_handshake();
-    //             ping = !ping;
-    //         }
-    //     }
-
-        // Conclude
-        {
-            this->process_done();
-        }
-    // }
+    // Conclude
+    {
+        this->process_done();
+    }
 }

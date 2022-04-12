@@ -54,8 +54,8 @@ public:
         acc->debug(debug);
 
         /* <<--params-default-->> */
-        num_tiles = 12;
-        tile_size = 1024;
+        num_tiles = 1;//12;
+        tile_size = 10; //1024;
         rd_wr_enable = 0;
     }
 
