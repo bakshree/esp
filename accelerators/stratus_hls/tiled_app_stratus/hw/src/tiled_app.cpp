@@ -209,7 +209,7 @@ void tiled_app::store_output()
                     #ifndef STRATUS_HLS
                         ESP_REPORT_INFO("Before Store sync for tile %u offset %u", b, sync_offset);
                     #endif
-                    //Wait for 1
+                    //Wait for 0
                     do {
                     this->dma_read_ctrl.put(dma_info2);
                     wait();
@@ -221,7 +221,7 @@ void tiled_app::store_output()
                         ESP_REPORT_INFO("Looping Store sync for tile %u/%u, offset=%u data=%lu", b, num_tiles, sync_offset, data);
                     #endif
                     }
-                    while(data==0);
+                    while(data==1);
                     // compute == synchronizer    
                     //send the output ready ack
                // }    
@@ -265,8 +265,8 @@ void tiled_app::store_output()
                 this->dma_write_ctrl.put(dma_info2);
                 sc_dt::sc_bv<DMA_WIDTH> dataBvout;
                 wait();
-                //write 0
-                dataBvout.range(DMA_WIDTH - 1, 0) = 0;
+                //write 1
+                dataBvout.range(DMA_WIDTH - 1, 0) = 1;
                 this->dma_write_chnl.put(dataBvout);
 
                 sp_offset += length;
