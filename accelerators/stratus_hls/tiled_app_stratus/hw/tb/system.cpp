@@ -40,7 +40,12 @@ void system_t::config_proc()
         ESP_REPORT_TIME(begin_time, "BEGIN - tiled_app");
 
         // Wait the termination of the accelerator
-        do { wait(); } while (!acc_done.read());
+        do { wait();
+        
+            ESP_REPORT_INFO("SETTING DUMP MEM BIT");
+            sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
+            mem[1] = data_bv0;
+     } while (!acc_done.read());
         debug_info_t debug_code = debug.read();
 
         // Print information about end time
@@ -127,10 +132,12 @@ void system_t::load_memory()
         for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
             data_bv.range((j+1) * DATA_WIDTH - 1, j * DATA_WIDTH) = in[i * DMA_WORD_PER_BEAT + j];
         mem[i] = data_bv;
+        ESP_REPORT_INFO("SENT %u", in[i]);
     }
 #endif
 
     sc_dt::sc_bv<DMA_WIDTH> data_bv(1);
+    //sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
     mem[1] = data_bv;
     mem[0] = data_bv;
 
@@ -155,12 +162,15 @@ void system_t::dump_memory()
     }
 #else
     offset = offset / DMA_WORD_PER_BEAT;
-    for (int i = 0; i < out_size / DMA_WORD_PER_BEAT; i++)
+    for (int i = 0; i < out_size / DMA_WORD_PER_BEAT; i++){
         for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
             out[i * DMA_WORD_PER_BEAT + j] = mem[offset + i].range((j + 1) * DATA_WIDTH - 1, j * DATA_WIDTH).to_int64();
-#endif
 
+        ESP_REPORT_INFO("RECEIVED %u", out[i * DMA_WORD_PER_BEAT]);
+    }
+#endif
     ESP_REPORT_INFO("dump memory completed");
+
 }
 
 int system_t::validate()

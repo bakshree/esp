@@ -116,6 +116,9 @@ void tiled_app::load_input()
                         {
                             HLS_UNROLL_SIMPLE;
                             plm[sp_offset + i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
+                            #ifndef STRATUS_HLS
+                            ESP_REPORT_INFO("LOAD RECEIVED %u", dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64());
+                            #endif
                             // if (ping)
                             //     plm_in_ping[i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
                             // else
@@ -217,11 +220,11 @@ void tiled_app::store_output()
                     wait();
                     data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
                     wait();
-                    #ifndef STRATUS_HLS
-                        ESP_REPORT_INFO("Looping Store sync for tile %u/%u, offset=%u data=%lu", b, num_tiles, sync_offset, data);
-                    #endif
                     }
                     while(data==1);
+                    #ifndef STRATUS_HLS
+                        ESP_REPORT_INFO("Looping Store sync for tile %u/%u, offset=%u data=%lu OVER", b, num_tiles, sync_offset, data);
+                    #endif
                     // compute == synchronizer    
                     //send the output ready ack
                // }    
@@ -251,6 +254,9 @@ void tiled_app::store_output()
                         {
                             HLS_UNROLL_SIMPLE;
                             dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm[sp_offset + i + k];
+                            #ifndef STRATUS_HLS
+                            ESP_REPORT_INFO("SENDING FROM HW %u", dataBv.to_int64());
+                            #endif
                             // if (ping)
                             //     dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm_out_ping[i + k];
                             // else
