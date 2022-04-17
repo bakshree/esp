@@ -42,21 +42,23 @@ void system_t::config_proc()
         // Print information about begin time
         sc_time begin_time = sc_time_stamp();
         ESP_REPORT_TIME(begin_time, "BEGIN - tiled_app");
-
+        bool load_turn = true;
         // Wait the termination of the accelerator
         do { wait();
         
             // ESP_REPORT_INFO("SETTING DUMP MEM BIT");
             // sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
             // mem[1] = data_bv0;
-                if(curr_tile < TB_NUM_TILES && read_sync()==1){
+                if(load_turn && curr_tile < TB_NUM_TILES && read_sync()==1){
                     ESP_REPORT_INFO("Loading Tile %u!", curr_tile);
                     load_memory();
+                    load_turn = !load_turn;
                 }
-                if(curr_tile < TB_NUM_TILES && write_sync()==1){
+                if((!load_turn) && curr_tile < TB_NUM_TILES && write_sync()==1){
                     ESP_REPORT_INFO("Storing Tile %u!", curr_tile);
                     dump_memory();
                     curr_tile++;
+                    load_turn = !load_turn;
                 }
 
      } while (!acc_done.read());
@@ -114,7 +116,9 @@ void system_t::load_memory()
             for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
                 data_bv.range((j+1) * DATA_WIDTH - 1, j * DATA_WIDTH) = in[init_offset + i * DMA_WORD_PER_BEAT + j];
             mem[2 + i] = data_bv;
-            //ESP_REPORT_INFO("SENT %u, idx %u", in[i+init_offset], i+init_offset);
+            #ifdef PRINT_ALL
+            ESP_REPORT_INFO("SENT %u, idx %u", in[i+init_offset], i+init_offset);
+            #endif
         }
     //}
     
@@ -220,7 +224,9 @@ void system_t::dump_memory()
         for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
             out[offset + i * DMA_WORD_PER_BEAT + j] = mem[2+in_words_adj + i].range((j + 1) * DATA_WIDTH - 1, j * DATA_WIDTH).to_int64();
 
-        //ESP_REPORT_INFO("RECEIVED %u idx %u", out[offset +i * DMA_WORD_PER_BEAT], offset +i * DMA_WORD_PER_BEAT);
+        #ifdef PRINT_ALL
+        ESP_REPORT_INFO("RECEIVED %u idx %u", out[offset +i * DMA_WORD_PER_BEAT], offset +i * DMA_WORD_PER_BEAT);
+        #endif
     }
 
     ESP_REPORT_INFO("dump memory completed for tile %u", curr_tile);
@@ -230,7 +236,7 @@ void system_t::dump_memory()
     //             ESP_REPORT_INFO("out[%u] = %u", i * out_words_adj + j,out[i * out_words_adj + j]);
     //         }
     sc_dt::sc_bv<DMA_WIDTH> data_bv(0);
-    mem[0] = data_bv;
+    //mem[0] = data_bv;
     mem[1] = data_bv;
 
 }
@@ -239,11 +245,14 @@ int system_t::validate()
 {
     // Check for mismatches
     uint32_t errors = 0;
-
+    bool first=true;
     for (int i = 0; i < num_tiles; i++)
         for (int j = 0; j < tile_size; j++)
             if (gold[i * out_words_adj + j] != out[i * out_words_adj + j]){
-                ESP_REPORT_INFO("idx: %u, gold = %u, out = %u", (i * out_words_adj + j), gold[i * out_words_adj + j] , out[i * out_words_adj + j]);
+                if(first){
+                    first = false;
+                    ESP_REPORT_INFO("idx: %u, gold = %u, out = %u", (i * out_words_adj + j), gold[i * out_words_adj + j] , out[i * out_words_adj + j]);
+                }
                 errors++;
             }
 

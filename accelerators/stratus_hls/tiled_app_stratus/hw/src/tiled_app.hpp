@@ -67,9 +67,9 @@ public:
     inline void store_load_cfg_handshake();
 
     // Private local memories
-    sc_dt::sc_int<DATA_WIDTH> plm[PLM_IN_WORD];
-    // sc_dt::sc_int<DATA_WIDTH> plm_in_ping[PLM_IN_WORD];
-    // sc_dt::sc_int<DATA_WIDTH> plm_in_pong[PLM_IN_WORD];
+    // sc_dt::sc_int<DATA_WIDTH> plm[PLM_IN_WORD];
+    sc_dt::sc_int<DATA_WIDTH> plm_in_ping[PLM_IN_WORD];
+    sc_dt::sc_int<DATA_WIDTH> plm_in_pong[PLM_IN_WORD];
     // sc_dt::sc_int<DATA_WIDTH> plm_out_ping[PLM_OUT_WORD];
     // sc_dt::sc_int<DATA_WIDTH> plm_out_pong[PLM_OUT_WORD];
 

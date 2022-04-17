@@ -12,8 +12,9 @@
 #include "esp_templates.hpp"
 
 const size_t MEM_SIZE = 196608 / (DMA_WIDTH/8);
-#define TB_NUM_TILES 12
+#define TB_NUM_TILES 2
 #define TB_TILE_SZ 1024
+//#define PRINT_ALL 1
 
 #include "core/systems/esp_system.hpp"
 

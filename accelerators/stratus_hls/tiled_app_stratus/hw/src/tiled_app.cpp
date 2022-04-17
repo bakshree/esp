@@ -8,6 +8,8 @@
 
 #include "tiled_app_functions.hpp"
 
+//#define PRINT_ALL 1
+
 // Processes
 
 void tiled_app::load_input()
@@ -48,9 +50,9 @@ void tiled_app::load_input()
             HLS_PROTO("load-dma");
             wait();
 
-            //bool ping = true;
+            bool ping = true;
 
-            uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT) * num_tiles;
+            //uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT) * num_tiles;
             uint32_t sync_offset =  0; // DMA_WORD_PER_BEAT + store_offset; 
             // Batching
             for (uint16_t b = 0; b < num_tiles; b++)
@@ -115,16 +117,22 @@ void tiled_app::load_input()
                         for (uint16_t k = 0; k < DMA_WORD_PER_BEAT; k++)
                         {
                             HLS_UNROLL_SIMPLE;
-                            plm[sp_offset + i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
+                            //plm[sp_offset + i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
+                            
+                            if (ping)
+                                plm_in_ping[sp_offset + i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
+                            else
+                                plm_in_pong[sp_offset + i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
+                            
                             #ifndef STRATUS_HLS
-                            //ESP_REPORT_INFO("LOAD RECEIVED %u", dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64());
+                            #ifdef PRINT_ALL
+                            uint64_t printval = (ping)?plm_in_ping[sp_offset + i + k].to_int64():plm_in_pong[sp_offset + i + k].to_int64();
+                            ESP_REPORT_INFO("TILE %u: LOAD RECEIVED %u, SP INDEX:%u, ping:%u", b, printval, (sp_offset + i + k), ping);
                             #endif
-                            // if (ping)
-                            //     plm_in_ping[i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
-                            // else
-                            //     plm_in_pong[i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
+                            #endif
                         }
                     }
+                    sp_offset += PLM_IN_WORD;
                 }
                 //this->load_compute_handshake();
                 this->load_store_cfg_handshake();
@@ -133,10 +141,9 @@ void tiled_app::load_input()
                 sc_dt::sc_bv<DMA_WIDTH> dataBvout;
                 wait();
                 //write 0
-                dataBvout.range(DMA_WIDTH - 1, 0) = 5;
+                dataBvout.range(DMA_WIDTH - 1, 0) = 0;
                 this->dma_write_chnl.put(dataBvout);
-                sp_offset += length;
-                //ping = !ping;
+                ping = !ping;
             }
         //}
     }
@@ -189,7 +196,7 @@ void tiled_app::store_output()
             HLS_PROTO("store-dma");
             wait();
 
-            // bool ping = true;
+            bool ping = true;
             // Batching
             for (uint16_t b = 0; b < num_tiles; b++)
             {
@@ -253,18 +260,20 @@ void tiled_app::store_output()
                         for (uint16_t k = 0; k < DMA_WORD_PER_BEAT; k++)
                         {
                             HLS_UNROLL_SIMPLE;
-                            dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm[sp_offset + i + k];
+                            //dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm[sp_offset + i + k];
+                            if (ping)
+                                dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm_in_ping[sp_offset + i + k];
+                            else
+                                dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm_in_pong[sp_offset + i + k];
                             #ifndef STRATUS_HLS
-                            //ESP_REPORT_INFO("SENDING FROM HW %u", dataBv.to_int64());
+                            #ifdef PRINT_ALL
+                            ESP_REPORT_INFO("TILE %u: SENDING FROM HW %u, SP INDEX: %u, ping:%u", b, dataBv.to_int64(), (sp_offset + i + k), ping);
                             #endif
-                            // if (ping)
-                            //     dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm_out_ping[i + k];
-                            // else
-                            //     dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm_out_pong[i + k];
+                            #endif
                         }
                         this->dma_write_chnl.put(dataBv);
                     }
-                    //ping = !ping;
+                    sp_offset += PLM_OUT_WORD;
                 }
 
                         //Write to DMA
@@ -276,6 +285,7 @@ void tiled_app::store_output()
                 this->dma_write_chnl.put(dataBvout);
                 wait();
 
+                ping = !ping;
 
                 //Write to DMA
                 //     dma_info_t dma_info3(0, 1, DMA_SIZE);
@@ -286,7 +296,6 @@ void tiled_app::store_output()
                 // dataBvout2.range(DMA_WIDTH - 1, 0) = 0;
                 // this->dma_write_chnl.put(dataBvout2);
 
-                sp_offset += length;
             }
         //}
     }
