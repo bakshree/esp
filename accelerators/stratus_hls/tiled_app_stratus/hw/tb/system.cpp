@@ -49,13 +49,13 @@ void system_t::config_proc()
             // ESP_REPORT_INFO("SETTING DUMP MEM BIT");
             // sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
             // mem[1] = data_bv0;
-                // if(write_sync()){
-                //     dump_memory();
-                //     curr_tile++;
-                //     if(curr_tile < TB_NUM_TILES){
-                //         if(read_sync())load_memory();
-                //     }
-                // }
+                if(write_sync()){
+                    dump_memory();
+                    curr_tile++;
+                    if(curr_tile < TB_NUM_TILES){
+                        if(read_sync())load_memory();
+                    }
+                }
 
      } while (!acc_done.read());
         debug_info_t debug_code = debug.read();
@@ -70,12 +70,12 @@ void system_t::config_proc()
 
     // Validate
     {
-        if(curr_tile <= TB_NUM_TILES && write_sync()){
-            dump_memory();
-            curr_tile++;
-            ESP_REPORT_INFO("MEMORY DUMPED");
-            //break;//TODO: Remove
-        }
+        // if(curr_tile <= TB_NUM_TILES && write_sync()){
+        //     dump_memory();
+        //     curr_tile++;
+        //     ESP_REPORT_INFO("MEMORY DUMPED");
+        //     //break;//TODO: Remove
+        // }
     //     dump_memory(); // store the output in more suitable data structure if needed
         // check the results with the golden model
         if (validate())
@@ -229,6 +229,10 @@ void system_t::dump_memory()
     }
 #endif
     ESP_REPORT_INFO("dump memory completed");
+
+
+    sc_dt::sc_bv<DMA_WIDTH> data_bv(0);
+    mem[0] = data_bv;
 
 }
 
