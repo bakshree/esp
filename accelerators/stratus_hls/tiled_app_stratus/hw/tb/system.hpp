@@ -12,6 +12,8 @@
 #include "esp_templates.hpp"
 
 const size_t MEM_SIZE = 196608 / (DMA_WIDTH/8);
+#define TB_NUM_TILES 12
+#define TB_TILE_SZ 1024
 
 #include "core/systems/esp_system.hpp"
 
@@ -54,8 +56,8 @@ public:
         acc->debug(debug);
 
         /* <<--params-default-->> */
-        num_tiles = 1;//12;
-        tile_size = 10; //1024;
+        num_tiles = TB_NUM_TILES;//12;
+        tile_size = TB_TILE_SZ; //1024;
         rd_wr_enable = 0;
     }
 

@@ -4,7 +4,6 @@
 #include <sstream>
 #include "system.hpp"
 
-#define TB_NUM_TILES 1
 int curr_tile = 0;
 
 // Process
@@ -22,13 +21,14 @@ void system_t::config_proc()
 
     // Config
     init_sync_cfg();
-    load_memory();
+    ESP_REPORT_INFO("Loading Tile 0!");
+    //load_memory();
     {
         conf_info_t config;
         // Custom configuration
         /* <<--params-->> */
-        config.num_tiles = 1; //num_tiles;
-        config.tile_size = 10; //tile_size;
+        config.num_tiles = num_tiles;
+        config.tile_size = tile_size;
         config.rd_wr_enable = rd_wr_enable;
 
         wait(); conf_info.write(config);
@@ -49,12 +49,14 @@ void system_t::config_proc()
             // ESP_REPORT_INFO("SETTING DUMP MEM BIT");
             // sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
             // mem[1] = data_bv0;
-                if(write_sync()){
+                if(curr_tile < TB_NUM_TILES && read_sync()==1){
+                    ESP_REPORT_INFO("Loading Tile %u!", curr_tile);
+                    load_memory();
+                }
+                if(curr_tile < TB_NUM_TILES && write_sync()==1){
+                    ESP_REPORT_INFO("Storing Tile %u!", curr_tile);
                     dump_memory();
                     curr_tile++;
-                    if(curr_tile < TB_NUM_TILES){
-                        if(read_sync())load_memory();
-                    }
                 }
 
      } while (!acc_done.read());
@@ -105,16 +107,21 @@ void system_t::load_memory()
             mem[DMA_BEAT_PER_WORD * i + j] = data_bv.range((j + 1) * DMA_WIDTH - 1, j * DMA_WIDTH);
     }
 #else
-    for (int i = 2; i < in_size / DMA_WORD_PER_BEAT; i++)  {
-        sc_dt::sc_bv<DMA_WIDTH> data_bv(in[i]);
-        for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
-            data_bv.range((j+1) * DATA_WIDTH - 1, j * DATA_WIDTH) = in[i * DMA_WORD_PER_BEAT + j];
-        mem[i] = data_bv;
-        ESP_REPORT_INFO("SENT %u", in[i]);
-    }
+    int init_offset = 2 + curr_tile*in_words_adj;
+    //for(int tile = 0; tile < num_tiles; tile++){
+        for (int i = 0; i < in_words_adj / DMA_WORD_PER_BEAT; i++)  {
+            sc_dt::sc_bv<DMA_WIDTH> data_bv(in[i+init_offset]);
+            for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
+                data_bv.range((j+1) * DATA_WIDTH - 1, j * DATA_WIDTH) = in[init_offset + i * DMA_WORD_PER_BEAT + j];
+            mem[2 + i] = data_bv;
+            //ESP_REPORT_INFO("SENT %u, idx %u", in[i+init_offset], i+init_offset);
+        }
+    //}
+    
 #endif  
     sc_dt::sc_bv<DMA_WIDTH> data_bv(1);
     mem[0] = data_bv;
+    ESP_REPORT_INFO("load memory completed for tile %u", curr_tile);
 }
 
 bool system_t::read_sync(){
@@ -130,7 +137,8 @@ bool system_t::read_sync(){
         read_sync = mem[0].range(DATA_WIDTH - 1, 0).to_int64();
 #endif
 
-    return read_sync;
+    //ESP_REPORT_INFO("read sync %u %u", read_sync, (read_sync==0));
+    return (read_sync==0);
 }
 
 bool system_t::write_sync(){
@@ -144,12 +152,12 @@ bool system_t::write_sync(){
     store_sync = data_bv.to_int64();
 #else
     //for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
-        ESP_REPORT_INFO("Checking Write Sync");
+        //ESP_REPORT_INFO("Checking Write Sync");
         store_sync = mem[1].range(DATA_WIDTH - 1, 0).to_int64();
-        ESP_REPORT_INFO("Write Sync = %u", store_sync);
+        //ESP_REPORT_INFO("Write Sync = %u", store_sync);
 #endif
         
-    return store_sync;
+    return (store_sync==1);
 }
 
 void system_t::init_sync_cfg(){
@@ -171,14 +179,14 @@ void system_t::init_sync_cfg(){
     out_words_adj = round_up(tile_size, DMA_WORD_PER_BEAT);
 #endif
 
-    in_size = in_words_adj * (num_tiles) + DMA_WORD_PER_BEAT + 1;
+    in_size = in_words_adj * (num_tiles) + 2;
     out_size = out_words_adj * (num_tiles);
 
     in = new int64_t[in_size];
     // in[0] = 1;
     // in[1] = 1;
     for (int i = 0; i < in_size; i++)
-        in[i] = i+1;
+        in[i] = i;
     // for (int i = 0; i < num_tiles; i++)
     //     for (int j = 0; j < tile_size; j++)
     //         in[i * in_words_adj + j] = (int64_t) j;
@@ -189,50 +197,41 @@ void system_t::init_sync_cfg(){
     // Compute golden output
     gold = new int64_t[out_size];
     for (int i = 0; i < out_size; i++)
-        gold[i] = i+3;
+        gold[i] = i+2;
     // for (int i = 0; i < num_tiles; i++)
     //     for (int j = 0; j < tile_size; j++)
     //         gold[i * out_words_adj + j] = (int64_t) j;
 
-
-    sc_dt::sc_bv<DMA_WIDTH> data_bv(1);
     sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
     mem[1] = data_bv0;
     mem[0] = data_bv0;
+    out = new int64_t[out_size];
 
-    ESP_REPORT_INFO("load memory completed");
 }
 
 void system_t::dump_memory()
 {
     // Get results from memory
-    out = new int64_t[out_size];
-    uint32_t offset = in_size;
+    uint32_t offset =  curr_tile*out_words_adj;
 
-#if (DMA_WORD_PER_BEAT == 0)
-    offset = offset * DMA_BEAT_PER_WORD;
-    for (int i = 0; i < out_size; i++)  {
-        sc_dt::sc_bv<DATA_WIDTH> data_bv;
-
-        for (int j = 0; j < DMA_BEAT_PER_WORD; j++)
-            data_bv.range((j + 1) * DMA_WIDTH - 1, j * DMA_WIDTH) = mem[offset + DMA_BEAT_PER_WORD * i + j];
-
-        out[i] = data_bv.to_int64();
-    }
-#else
     offset = offset / DMA_WORD_PER_BEAT;
-    for (int i = 0; i < out_size / DMA_WORD_PER_BEAT; i++){
+    //ESP_REPORT_INFO("OUTPUT OFFSET %u", offset);
+    for (int i = 0; i < out_words_adj / DMA_WORD_PER_BEAT; i++){
         for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
-            out[i * DMA_WORD_PER_BEAT + j] = mem[offset + i].range((j + 1) * DATA_WIDTH - 1, j * DATA_WIDTH).to_int64();
+            out[offset + i * DMA_WORD_PER_BEAT + j] = mem[2+in_words_adj + i].range((j + 1) * DATA_WIDTH - 1, j * DATA_WIDTH).to_int64();
 
-        ESP_REPORT_INFO("RECEIVED %u", out[i * DMA_WORD_PER_BEAT]);
+        //ESP_REPORT_INFO("RECEIVED %u idx %u", out[offset +i * DMA_WORD_PER_BEAT], offset +i * DMA_WORD_PER_BEAT);
     }
-#endif
-    ESP_REPORT_INFO("dump memory completed");
 
+    ESP_REPORT_INFO("dump memory completed for tile %u", curr_tile);
 
+    // for (int i = 0; i < num_tiles; i++)
+    //         for (int j = 0; j < tile_size; j++){
+    //             ESP_REPORT_INFO("out[%u] = %u", i * out_words_adj + j,out[i * out_words_adj + j]);
+    //         }
     sc_dt::sc_bv<DMA_WIDTH> data_bv(0);
     mem[0] = data_bv;
+    mem[1] = data_bv;
 
 }
 
