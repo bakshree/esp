@@ -64,6 +64,10 @@ public:
     // Configure accelerator
     void config_proc();
 
+    void init_sync_cfg();
+    bool read_sync();
+    bool write_sync();
+
     // Load internal memory
     void load_memory();
 

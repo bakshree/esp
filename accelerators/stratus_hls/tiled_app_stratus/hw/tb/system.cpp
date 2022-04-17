@@ -4,6 +4,9 @@
 #include <sstream>
 #include "system.hpp"
 
+#define TB_NUM_TILES 1
+int curr_tile = 0;
+
 // Process
 void system_t::config_proc()
 {
@@ -18,6 +21,7 @@ void system_t::config_proc()
     ESP_REPORT_INFO("reset done");
 
     // Config
+    init_sync_cfg();
     load_memory();
     {
         conf_info_t config;
@@ -42,9 +46,17 @@ void system_t::config_proc()
         // Wait the termination of the accelerator
         do { wait();
         
-            ESP_REPORT_INFO("SETTING DUMP MEM BIT");
-            sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
-            mem[1] = data_bv0;
+            // ESP_REPORT_INFO("SETTING DUMP MEM BIT");
+            // sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
+            // mem[1] = data_bv0;
+                // if(write_sync()){
+                //     dump_memory();
+                //     curr_tile++;
+                //     if(curr_tile < TB_NUM_TILES){
+                //         if(read_sync())load_memory();
+                //     }
+                // }
+
      } while (!acc_done.read());
         debug_info_t debug_code = debug.read();
 
@@ -58,7 +70,13 @@ void system_t::config_proc()
 
     // Validate
     {
-        dump_memory(); // store the output in more suitable data structure if needed
+        if(curr_tile <= TB_NUM_TILES && write_sync()){
+            dump_memory();
+            curr_tile++;
+            ESP_REPORT_INFO("MEMORY DUMPED");
+            //break;//TODO: Remove
+        }
+    //     dump_memory(); // store the output in more suitable data structure if needed
         // check the results with the golden model
         if (validate())
         {
@@ -78,6 +96,63 @@ void system_t::config_proc()
 // Functions
 void system_t::load_memory()
 {
+
+    // Memory initialization:
+#if (DMA_WORD_PER_BEAT == 0)
+    for (int i = 0; i < in_size; i++)  {
+        sc_dt::sc_bv<DATA_WIDTH> data_bv(in[i]);
+        for (int j = 0; j < DMA_BEAT_PER_WORD; j++)
+            mem[DMA_BEAT_PER_WORD * i + j] = data_bv.range((j + 1) * DMA_WIDTH - 1, j * DMA_WIDTH);
+    }
+#else
+    for (int i = 2; i < in_size / DMA_WORD_PER_BEAT; i++)  {
+        sc_dt::sc_bv<DMA_WIDTH> data_bv(in[i]);
+        for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
+            data_bv.range((j+1) * DATA_WIDTH - 1, j * DATA_WIDTH) = in[i * DMA_WORD_PER_BEAT + j];
+        mem[i] = data_bv;
+        ESP_REPORT_INFO("SENT %u", in[i]);
+    }
+#endif  
+    sc_dt::sc_bv<DMA_WIDTH> data_bv(1);
+    mem[0] = data_bv;
+}
+
+bool system_t::read_sync(){
+    int64_t read_sync; 
+
+#if (DMA_WORD_PER_BEAT == 0)
+    sc_dt::sc_bv<DATA_WIDTH> data_bv;
+    for (int j = 0; j < DMA_BEAT_PER_WORD; j++)
+        data_bv.range((j + 1) * DMA_WIDTH - 1, j * DMA_WIDTH) = mem[0 + j];
+    read_sync = data_bv.to_int64();
+#else
+    for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
+        read_sync = mem[0].range(DATA_WIDTH - 1, 0).to_int64();
+#endif
+
+    return read_sync;
+}
+
+bool system_t::write_sync(){
+
+    int64_t store_sync; 
+
+#if (DMA_WORD_PER_BEAT == 0)
+    sc_dt::sc_bv<DATA_WIDTH> data_bv;
+    for (int j = 0; j < DMA_BEAT_PER_WORD; j++)
+        data_bv.range((j + 1) * DMA_WIDTH - 1, j * DMA_WIDTH) = mem[1 + j];
+    store_sync = data_bv.to_int64();
+#else
+    //for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
+        ESP_REPORT_INFO("Checking Write Sync");
+        store_sync = mem[1].range(DATA_WIDTH - 1, 0).to_int64();
+        ESP_REPORT_INFO("Write Sync = %u", store_sync);
+#endif
+        
+    return store_sync;
+}
+
+void system_t::init_sync_cfg(){
     // Optional usage check
 #ifdef CADENCE
     if (esc_argc() != 1)
@@ -119,27 +194,11 @@ void system_t::load_memory()
     //     for (int j = 0; j < tile_size; j++)
     //         gold[i * out_words_adj + j] = (int64_t) j;
 
-    // Memory initialization:
-#if (DMA_WORD_PER_BEAT == 0)
-    for (int i = 0; i < in_size; i++)  {
-        sc_dt::sc_bv<DATA_WIDTH> data_bv(in[i]);
-        for (int j = 0; j < DMA_BEAT_PER_WORD; j++)
-            mem[DMA_BEAT_PER_WORD * i + j] = data_bv.range((j + 1) * DMA_WIDTH - 1, j * DMA_WIDTH);
-    }
-#else
-    for (int i = 0; i < in_size / DMA_WORD_PER_BEAT; i++)  {
-        sc_dt::sc_bv<DMA_WIDTH> data_bv(in[i]);
-        for (int j = 0; j < DMA_WORD_PER_BEAT; j++)
-            data_bv.range((j+1) * DATA_WIDTH - 1, j * DATA_WIDTH) = in[i * DMA_WORD_PER_BEAT + j];
-        mem[i] = data_bv;
-        ESP_REPORT_INFO("SENT %u", in[i]);
-    }
-#endif
 
     sc_dt::sc_bv<DMA_WIDTH> data_bv(1);
-    //sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
-    mem[1] = data_bv;
-    mem[0] = data_bv;
+    sc_dt::sc_bv<DMA_WIDTH> data_bv0(0);
+    mem[1] = data_bv0;
+    mem[0] = data_bv0;
 
     ESP_REPORT_INFO("load memory completed");
 }
