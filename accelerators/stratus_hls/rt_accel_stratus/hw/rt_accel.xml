@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sld>
+  <accelerator name="rt_accel" desc="Accelerator RT_ACCEL" data_size="4" device_id="027" hls_tool="stratus_hls">
+    <param name="img_height" desc="img_height" />
+    <param name="img_width" desc="img_width" />
+  </accelerator>
+</sld>
