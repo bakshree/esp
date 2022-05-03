@@ -81,9 +81,9 @@ public:
     uint32_t out_words_adj;
     uint32_t in_size;
     uint32_t out_size;
-    float *in;
-    float *out;
-    float *gold;
+    int32_t *in;
+    int32_t *out;
+    int32_t *gold;
 
     // Other Functions
 };

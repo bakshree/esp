@@ -95,7 +95,7 @@ void system_t::load_memory()
     in_size = in_words_adj * (1);
     out_size = out_words_adj * (1);
 
-    in = new float[in_size];
+    in = new int[in_size];
     for (int i = 0; i < 1; i++)
         for (int j = 0; j < img_width*img_height; j++){ // total loop: 3*img_width*img_height
             float dir_x = (i % img_width + 0.5) - img_width / 2.;
@@ -107,18 +107,19 @@ void system_t::load_memory()
         }
 
     // Compute golden output
-    gold = new float[out_size];
+    gold = new int[out_size];
 
     std::ofstream ifs_text("./output.txt", std::ios::binary);
     std::stringstream buffer;
     buffer << ifs_text.rdbuf();
-    std::string tokenstring(buffer);
-    std::string tokens[] = tokenstring.split(',');
+    //std::string tokenstring(buffer);
+    // std::string* tokens = tokenstring.split(',');
     for (int i = 0; i < 1; i++)
         for (int j = 0; j < 3*img_width*img_height; j++){
-            // ss>>token;
-            gold[i * out_words_adj + j] = stof(tokens[j]);
-            // ss>>token; // , removal
+            std::string token;
+            buffer>>token;
+            gold[i * out_words_adj + j] = std::stof(token);
+            buffer>>token; // , removal
         }
 
     // Memory initialization:

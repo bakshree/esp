@@ -313,13 +313,21 @@ void rt_accel::compute_kernel()
                     //     plm_out_pong[i] = plm_in_pong[i];
 
                     vec3 inputs;
-                    inputs.x = int2fp(plm_in_ping[3*i].to_int64());
-                    inputs.y =  int2fp(plm_in_ping[3*i+1].to_int64()); 
-                    inputs.z = int2fp(plm_in_ping[3*i+2]).to_int64();
+                    // inputs.x = int2fp(plm_in_ping[3*i].to_int64());
+                    // inputs.y =  int2fp(plm_in_ping[3*i+1].to_int64()); 
+                    // inputs.z = int2fp(plm_in_ping[3*i+2]).to_int64();
+                    // vec3 outputs = cast_ray(vec3(0, 0, 0), inputs.normalized());
+                    // plm_out_ping[3*i] = fp2int(outputs.x);
+                    // plm_out_ping[3*i+1] = fp2int(outputs.y);
+                    // plm_out_ping[3*i+2] = fp2int(outputs.z);
+
+                    inputs.x = plm_in_ping[3*i];
+                    inputs.y = plm_in_ping[3*i+1]; 
+                    inputs.z = plm_in_ping[3*i+2];
                     vec3 outputs = cast_ray(vec3(0, 0, 0), inputs.normalized());
-                    plm_out_ping[3*i] = fp2int(outputs.x);
-                    plm_out_ping[3*i+1] = fp2int(outputs.y);
-                    plm_out_ping[3*i+2] = fp2int(outputs.z);
+                    plm_out_ping[3*i] =   outputs.x;
+                    plm_out_ping[3*i+1] = outputs.y;
+                    plm_out_ping[3*i+2] = outputs.z;
                 }
 
                 out_rem -= PLM_OUT_WORD;
