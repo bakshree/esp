@@ -24,8 +24,8 @@ static unsigned DMA_WORD_PER_BEAT(unsigned _st)
 #define DEV_NAME "sld,tiled_app_stratus"
 
 /* <<--params-->> */
-const int32_t num_tiles = 5;//12;
-const int32_t tile_size = 16;
+const int32_t num_tiles = 2;//12;
+const int32_t tile_size = 5;
 const int32_t rd_wr_enable = 0;
 
 static unsigned in_words_adj;
@@ -55,18 +55,18 @@ static unsigned coherence;
 
 int load_mem(token_t *in, token_t *gold, int* tile){
 	int offset = 2;
-	if(in[0]!=1 && *tile < num_tiles){
+	if(in[0]!=1 ){ //&& *tile < num_tiles){
 		printf("In  sync: %d Loading tile %d: ",in[0], *tile);
 		for (int j = 0; j < tile_size; j++)
 			in[offset + j] = 2*((*tile) * in_words_adj + j);
 
 
-        // asm volatile ("fence rw, rw");
+        asm volatile ("fence rw, rw");
 
-		for(int i = 0; i< tile_size; i++)
-			printf("%d, ", 2*((*tile) * in_words_adj + i));
+		// for(int i = 0; i< tile_size; i++)
+		// 	printf("%d, ", 2*((*tile) * in_words_adj + i));
 
-		printf("\n");
+		// printf("\n");
 
 		in[0] = 1;
 
@@ -79,16 +79,16 @@ int load_mem(token_t *in, token_t *gold, int* tile){
 
 
 int store_mem(token_t *out, token_t* mem, int offset, int* tile){
-	if(mem[1]==1 && *tile < num_tiles){
-		printf("Out sync: %d Storing tile %d: ", mem[1], *tile);
+	if(mem[1]==1 ){//&& *tile < num_tiles){
+		printf("Out sync: %d Storing tile %d at offset %d\n", mem[1], *tile, (*tile) * out_words_adj);
 		for (int j = 0; j < tile_size; j++)
 			out[(*tile) * out_words_adj + j] = mem[offset + j];
 
-        // asm volatile ("fence rw, rw");
-		for(int i = 0; i< tile_size; i++)
-			printf("%d, ", mem[offset + i]);
+        asm volatile ("fence rw, rw");
+		// for(int i = 0; i< tile_size; i++)
+		// 	printf("%d, ", mem[offset + i]);
 
-		printf("\n");
+		// printf("\n");
 
 		mem[1] = 0;
 
@@ -150,7 +150,7 @@ static void init_buf (token_t *in, token_t * gold, token_t* out)
 
 int main(int argc, char * argv[])
 {
-	printf("Hello World 123\n");
+	// printf("Hello World 123\n");
 
 	#if 1
 	int i;
@@ -164,7 +164,7 @@ int main(int argc, char * argv[])
 	token_t *gold;
 	token_t *out;
 	unsigned errors = 0;
-	printf("Checkpoint 1\n");
+	// printf("Checkpoint 1\n");
 
 	if (DMA_WORD_PER_BEAT(sizeof(token_t)) == 0) {
 		in_words_adj = tile_size;
@@ -173,7 +173,7 @@ int main(int argc, char * argv[])
 		in_words_adj = round_up(tile_size, DMA_WORD_PER_BEAT(sizeof(token_t)));
 		out_words_adj = round_up(tile_size, DMA_WORD_PER_BEAT(sizeof(token_t)));
 	}
-	printf("Checkpoint 2\n");
+	// printf("Checkpoint 2\n");
 
 	in_len = in_words_adj+2;
 	out_len = out_words_adj;
@@ -182,18 +182,18 @@ int main(int argc, char * argv[])
 	out_offset  = in_len;
 	mem_size = (out_offset * sizeof(token_t)) + out_size;
 
-	printf("Checkpoint 3\n");
+	// printf("Checkpoint 3\n");
 
 
-	printf("num_tiles      =  %u\n ",num_tiles     ); //num_tiles);
-	printf("in_words_adj   =  %u\n ",in_words_adj     ); //num_tiles);
-	printf("out_words_adj  =  %u\n ",out_words_adj     ); //num_tiles);
-	printf("in_len         =  %u\n ",in_len     ); //num_tiles);
-	printf("out_len        =  %u\n ",out_len    ); // (num_tiles);
-	printf("in_size        =  %u\n ",in_size    ); //(token_t);
-	printf("out_size       =  %u\n ",out_size   ); //of(token_t);
-	printf("out_offset     =  %u\n ",out_offset ); //
-	printf("mem_size       =  %u\n ",mem_size   ); //sizeof(token_t)) + out_size;
+	printf("num_tiles      =  %u\n ",num_tiles     	); //num_tiles);
+	printf("in_words_adj   =  %u\n ",in_words_adj   ); //num_tiles);
+	printf("out_words_adj  =  %u\n ",out_words_adj  ); //num_tiles);
+	printf("in_len         =  %u\n ",in_len     	); //num_tiles);
+	printf("out_len        =  %u\n ",out_len   		); // (num_tiles);
+	printf("in_size        =  %u\n ",in_size    	); //(token_t);
+	printf("out_size       =  %u\n ",out_size   	); //of(token_t);
+	printf("out_offset     =  %u\n ",out_offset 	); //
+	printf("mem_size       =  %u\n ",mem_size   	); //sizeof(token_t)) + out_size;
 
 	// Search for the device
 	printf("Scanning device tree... \n");
@@ -236,13 +236,13 @@ int main(int argc, char * argv[])
 		printf("  nchunk = %lu\n", NCHUNK(mem_size));
 
         asm volatile ("fence rw, rw");
-//#ifndef __riscv
-// 		for (coherence = ACC_COH_NONE; coherence <= ACC_COH_FULL; coherence++) {
-// #else
+		//#ifndef __riscv
+		// 		for (coherence = ACC_COH_NONE; coherence <= ACC_COH_FULL; coherence++) {
+		// #else
 		{
 			/* TODO: Restore full test once ESP caches are integrated */
 			coherence = ACC_COH_FULL;
-// #endif
+		// #endif
 			printf("  --------------------\n");
 			printf("  Generate input...\n");
 			init_buf(mem, gold, out);
@@ -285,10 +285,11 @@ int main(int argc, char * argv[])
 			int temp_rd_wr_enable = 0;
 			int store_done_prev = 0;
         	int load_turn = 1;
-			int tiles_read = 0;
+			// int tiles_read = 0;
 			while ( write_tile < num_tiles) {
+			// while ( !done) {
 				done = ioread32(dev, STATUS_REG);
-				tiles_read = ioread32(dev, TILED_APP_NUM_TILES_REG);
+				// tiles_read = ioread32(dev, TILED_APP_NUM_TILES_REG);
 				// load_mem(mem, &tile); 
 				// store_mem(mem, &tile); 
 				// temp_rd_wr_enable = ioread32(dev, TILED_APP_RD_WR_ENABLE_REG);
@@ -299,14 +300,16 @@ int main(int argc, char * argv[])
 				// 	store_done_prev = mem[1];
 				// 	printf("Done: %d, Store Done bit: %d\n", done, mem[1]);
 				// //}
-				printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",tiles_read, load_turn, mem[0], mem[1], read_tile, write_tile, done);
-				// load_mem(mem, gold, &read_tile);
-				// store_mem(out, mem, out_offset, &write_tile);
-				if((load_turn && load_mem(mem, gold, &read_tile))||((!load_turn) && store_mem(out, mem, out_offset, &write_tile)) ){
-					load_turn = !load_turn;
-					//printf("load_turn: %d read_tile: %d done: %d\n", load_turn, read_tile, done);
-				// printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",tiles_read, load_turn, mem[0], mem[1], read_tile, write_tile, done);
-				}
+				// printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",num_tiles, load_turn, mem[0], mem[1], read_tile, write_tile, done);
+				load_mem(mem, gold, &read_tile);
+				store_mem(out, mem, out_offset, &write_tile);
+				// if((load_turn && load_mem(mem, gold, &read_tile))||((!load_turn) && store_mem(out, mem, out_offset, &write_tile)) ){
+				// 	load_turn = !load_turn;
+				// 	//printf("load_turn: %d read_tile: %d done: %d\n", load_turn, read_tile, done);
+				// // printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",tiles_read, load_turn, mem[0], mem[1], read_tile, write_tile, done);
+				// }
+
+				
 
 				done &= STATUS_MASK_DONE;
 				// if(load_turn && load_mem(mem, gold, &read_tile)){
@@ -318,18 +321,18 @@ int main(int argc, char * argv[])
 				// 	printf("load_turn: %d write_tile: %d done: %d\n", load_turn, write_tile, done);
 				// }
 
-			}
-			iowrite32(dev, CMD_REG, 0x0);
-			printf("Load Done bit: %d\n", mem[0]);
-			printf("Store Done bit: %d\n", mem[1]);
-			for(int i = 0; i< mem_size; i++){
-				if(i<in_len)
-					printf("in bit %d: %d\n", i-2, mem[i]);
-				else
-					printf("out bit %d: %d\n", i-in_len, mem[i]);
-			}
-			
+				asm volatile ("fence rw, rw");
 
+			}
+			//What is this doing?
+			// iowrite32(dev, CMD_REG, 0x0);
+			// printf("Load Done bit: %d\n", mem[0]);
+			// printf("Store Done bit: %d\n", mem[1]);
+			// for(int i = 0; i< in_len; i++)
+			// 	printf("in bit %d: %d\n", i-2, mem[i]);
+			// for(int i = 0; i< num_tiles*tile_size; i++)
+			// 	printf("out bit %d: %d\n", i, out[i]);
+			
 			printf("  Done\n");
 			printf("  validating...\n");
 

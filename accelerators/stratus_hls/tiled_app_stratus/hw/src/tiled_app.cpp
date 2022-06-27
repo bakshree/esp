@@ -63,7 +63,10 @@ void tiled_app::load_input()
             //uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT) * num_tiles;
             // Batching
             for (uint16_t b = 0; b < num_tiles; b++)
-            {   
+            {
+                HLS_PROTO("load-tile-loop");
+                wait();
+                HLS_UNROLL_LOOP(OFF);
                 {
                     //{   // Read synchronizer   
                     uint64_t data = 1;
@@ -74,12 +77,10 @@ void tiled_app::load_input()
 
                     //Read from DMA
                     // sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-    // #ifndef STRATUS_HLS
-    //     uint32_t sync_offset =  0; // DMA_WORD_PER_BEAT + store_offset; 
-    //     ESP_REPORT_INFO("Before Load sync for tile %u/%u sync_offset %u", b, num_tiles, sync_offset);
-    // #endif
+    
                     //Wait for 1
                     do {
+                        HLS_PROTO("load-read-sync");
                         HLS_UNROLL_LOOP(OFF);
                         this->dma_read_ctrl.put(dma_info2);
                         wait();
@@ -164,6 +165,7 @@ void tiled_app::load_input()
 
                     // Wait for 0
                     do {
+                        HLS_PROTO("load-write-sync");
                         HLS_UNROLL_LOOP(OFF);
                         this->dma_read_ctrl.put(dma_info1);
                         wait();
@@ -179,16 +181,17 @@ void tiled_app::load_input()
                     //     ESP_REPORT_INFO("Looping Store sync for tile %u/%u, offset=%u data=%lu OVER", b, num_tiles, sync_offset, data);
                     // #endif
 
-                    this->load_compute_handshake();
-                    // plm_in_ping[0] = 1;
-                    //this->load_store_cfg_handshake();
-                    // Write to DMA
-                    //ping = !ping;
-
-                    this->store_compute_handshake();
                 }
 
-               
+                this->load_compute_handshake();
+                wait();
+                // plm_in_ping[0] = 1;
+                //this->load_store_cfg_handshake();
+                // Write to DMA
+
+                this->store_compute_handshake();
+
+                ping = !ping;
 
             }
         //}
@@ -199,8 +202,9 @@ void tiled_app::load_input()
     // Conclude
     {
         // this->process_done();
+        HLS_PROTO("load-process-done");
         this->process_done();
-        this->accelerator_done();
+        // this->accelerator_done();
     }
 }
 
@@ -216,7 +220,6 @@ void tiled_app::store_output()
 	    // // load_store_cfg_done.ack.reset_ack();
 	    // //load_store_cfg_done.req.reset_req();
 
-        // this->reset_compute_kernel();
 
         input_ready.ack.reset_ack();
         output_ready.req.reset_req();
@@ -234,12 +237,13 @@ void tiled_app::store_output()
     /* <<--params-->> */
     int32_t num_tiles;
     int32_t tile_size;
+    conf_info_t config;
     // int32_t rd_wr_enable;
     {
         HLS_PROTO("store-config");
 
         cfg.wait_for_config(); // config process
-        conf_info_t config = this->conf_info.read();
+        config = this->conf_info.read();
 
         // User-defined config code
         /* <<--local-params-->> */
@@ -251,6 +255,7 @@ void tiled_app::store_output()
     // Store
     {// Store - only if rd_wr_enable is 1
         //if(rd_wr_enable == 1){
+            
             HLS_PROTO("store-dma");
             wait();
 
@@ -258,12 +263,29 @@ void tiled_app::store_output()
             // Batching
             for (uint16_t b = 0; b < num_tiles; b++)
             {
+                HLS_PROTO("store-tile-loop");
+                wait();
+                HLS_UNROLL_LOOP(OFF);
+
                 uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT)+ 2*DMA_WORD_PER_BEAT;
                 uint32_t offset = store_offset;
                 uint32_t sp_offset = 0;
 
                 wait();
                 this->compute_load_handshake();
+                {
+                    HLS_PROTO("store-read-sync");
+                    wait();
+                    int syn_len = 1;
+                    sc_dt::sc_bv<DMA_WIDTH> dataBvout2;
+                    dma_info_t dma_info3(0, syn_len/ DMA_WORD_PER_BEAT, DMA_SIZE);
+                    this->dma_write_ctrl.put(dma_info3);
+                    dataBvout2.range(DMA_WIDTH - 1, 0) = 0;
+                    this->dma_write_chnl.put(dataBvout2);
+                    wait();
+                }
+                this->compute_store_handshake();
+
                 //this->store_load_cfg_handshake();
                 wait();
 
@@ -327,25 +349,19 @@ void tiled_app::store_output()
                 //Write to DMA
 
                 //dma_info_t dma_info2(0, 1, DMA_SIZE);
-                int syn_len = 2;
-                sc_dt::sc_bv<DMA_WIDTH> dataBvout2;
-                dma_info_t dma_info3(0, syn_len/ DMA_WORD_PER_BEAT, DMA_SIZE);
-                this->dma_write_ctrl.put(dma_info3);
+                
                 // wait();
                 {
-                    dataBvout2.range(DMA_WIDTH - 1, 0) = 0;
-                    this->dma_write_chnl.put(dataBvout2);
+                    HLS_PROTO("store-write-sync");
                     wait();
-                }
-                {
-                    // int syn_len = 1;
-                    // sc_dt::sc_bv<DMA_WIDTH> dataBvout2;
-                    // dma_info_t dma_info2(1, syn_len/ DMA_WORD_PER_BEAT, DMA_SIZE);
-                    // this->dma_write_ctrl.put(dma_info2);
+                    int syn_len = 1;
+                    sc_dt::sc_bv<DMA_WIDTH> dataBvout2;
+                    dma_info_t dma_info2(1, syn_len/ DMA_WORD_PER_BEAT, DMA_SIZE);
+                    this->dma_write_ctrl.put(dma_info2);
                     // wait();
                     dataBvout2.range(DMA_WIDTH - 1, 0) = 1;
                     this->dma_write_chnl.put(dataBvout2);
-                    // wait();
+                    wait();
                 }
 
 
@@ -361,12 +377,6 @@ void tiled_app::store_output()
                 // this->dma_write_chnl.put(dataBvout);
                 // wait();
 
-                {
-                    this->compute_store_handshake();
-                }
-
-//uncomment
-                
 
                  // { 
                    
@@ -375,14 +385,25 @@ void tiled_app::store_output()
                     //send the output ready ack
                // }    
                 // this->load_store_cfg_handshake();
-                //ping = !ping;
+                ping = !ping;
+
+                // if(b==(num_tiles-1)){
+                //     this->process_done();
+                //     this->accelerator_done();
+                // }
             }
         //}
+        // this->process_done();
+        // this->accelerator_done();
     }
 
     // Conclude
     {
+        // this->compute_store_handshake();
+        // wait();
+        HLS_PROTO("store-process-done");
         this->process_done();
+        this->accelerator_done();
     }
 }
 
@@ -397,7 +418,8 @@ void tiled_app::compute_kernel()
     // Reset
     {
         HLS_PROTO("compute-reset");
-
+        // this->reset_compute_kernel();
+        wait();
     }
 
 
