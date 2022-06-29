@@ -25,7 +25,7 @@ static unsigned DMA_WORD_PER_BEAT(unsigned _st)
 
 /* <<--params-->> */
 const int32_t num_tiles = 2;//12;
-const int32_t tile_size = 5;
+const int32_t tile_size = 8;
 const int32_t rd_wr_enable = 0;
 
 static unsigned in_words_adj;
@@ -51,18 +51,28 @@ static unsigned coherence;
 #define TILED_APP_NUM_TILES_REG 0x48
 #define TILED_APP_TILE_SIZE_REG 0x44
 #define TILED_APP_RD_WR_ENABLE_REG 0x40
-
+#define SYNC_BITS 1
 
 int load_mem(token_t *in, token_t *gold, int* tile){
-	int offset = 2;
-	if(in[0]!=1 ){ //&& *tile < num_tiles){
-		printf("In  sync: %d Loading tile %d: ",in[0], *tile);
+	// int offset = 2;
+	#if SYNC_BITS > 1
+	int offset = SYNC_BITS;
+	if(in[0]!=1 && *tile < num_tiles){
+		// printf("In  sync: %d Loading tile %d: \n",in[0], *tile);
 		for (int j = 0; j < tile_size; j++)
 			in[offset + j] = 2*((*tile) * in_words_adj + j);
 
-
+		// in[0] = 0;
+		// printf("Next data: ");
+		// for(int __in = 0; __in< 2+2*(tile_size); __in++)
+		// 	printf("%d ", in[__in]);
+		// printf("\n");
         asm volatile ("fence rw, rw");
 
+		// printf("Then data: ");
+		// for(int __in = 0; __in< 2+2*(tile_size); __in++)
+		// 	printf("%d ", in[__in]);
+		// printf("\n");
 		// for(int i = 0; i< tile_size; i++)
 		// 	printf("%d, ", 2*((*tile) * in_words_adj + i));
 
@@ -74,12 +84,52 @@ int load_mem(token_t *in, token_t *gold, int* tile){
 		*tile = *tile + 1;
 		return 1;
 	}
+	#else
+	int offset = SYNC_BITS;
+
+
+	if(in[0]!=1 && *tile < num_tiles){
+
+		// printf("In  sync: %d Loading tile %d: \n",in[0], *tile);
+		// in[0] = 0;
+
+		for (int j = 0; j < tile_size; j++)
+			in[offset + j] = 2*((*tile) * in_words_adj + j);
+
+
+		// printf("Next data: ");
+		// for(int __in = 0; __in< offset+2*(tile_size); __in++)
+		// 	printf("%d ", in[__in]);
+		// printf("\n");
+
+
+        asm volatile ("fence rw, rw");
+
+		// for(int i = 0; i< tile_size; i++)
+		// 	printf("%d, ", 2*((*tile) * in_words_adj + i));
+		// printf("\n");
+
+		in[0] = 1;
+
+		// printf("Then data: ");
+		// for(int __in = 0; __in< offset+2*(tile_size); __in++)
+		// 	printf("%d ", in[__in]);
+		// printf("\n");
+
+
+
+		*tile = *tile + 1;
+		return 1;
+	}
+
+	#endif
 	return 0;
 }
 
 
+	#if SYNC_BITS > 1
 int store_mem(token_t *out, token_t* mem, int offset, int* tile){
-	if(mem[1]==1 ){//&& *tile < num_tiles){
+	if(mem[1]!=0 && *tile < num_tiles){
 		printf("Out sync: %d Storing tile %d at offset %d\n", mem[1], *tile, (*tile) * out_words_adj);
 		for (int j = 0; j < tile_size; j++)
 			out[(*tile) * out_words_adj + j] = mem[offset + j];
@@ -90,12 +140,33 @@ int store_mem(token_t *out, token_t* mem, int offset, int* tile){
 
 		// printf("\n");
 
+		// mem[0] = 0; //TODO: delete
 		mem[1] = 0;
 
         // asm volatile ("fence rw, rw");
 		*tile = (*tile) + 1;
 		return 1;
 	}
+	#else
+int store_mem(token_t *out, token_t* mem, int offset, int* tile, int* read_tile, token_t *gold){
+	if(mem[0]!=0 && mem[0]!=1 && *tile < num_tiles){
+		// printf("Out sync: %d Storing tile %d at offset %d\n", mem[1], *tile, (*tile) * out_words_adj);
+		
+		for (int j = 0; j < tile_size; j++)
+			out[(*tile) * out_words_adj + j] = mem[offset + j];
+
+        asm volatile ("fence rw, rw");
+
+		// for(int i = 0; i< tile_size; i++)
+		// 	printf("%d, ", mem[offset + i]);
+		// printf("\n");
+
+		*tile = (*tile) + 1;
+		if(*read_tile < num_tiles) load_mem(mem, gold, read_tile);
+
+		return 1;
+	}	
+	#endif
 	return 0;
 }
 
@@ -125,23 +196,19 @@ static void init_buf (token_t *in, token_t * gold, token_t* out)
 	int j;
 	int offset = 2;
 	in[0] = 0;
-	in[1] = 0;
-	// for (i = 0; i < tile_size; i++){
-	// 	in[offset + i] = 0;
-	// 	in[out_offset + i] = 0;
-	// }
-	// for (i = 0; i < num_tiles; i++)
-	// 	for (j = 0; j < tile_size; j++)
-	// 		in[offset + i * in_words_adj + j] = (token_t) j;
-	// //in[0] = 1;
+	// in[1] = 0;
+	for (j = 0; j < 2*tile_size; j++){
+		in[j+1] = 0;
+	}
 	int seq = 0;
 	// printf("Gold: ");
-	for (i = 0; i < num_tiles; i++)
+	for (i = 0; i < num_tiles; i++){
 		for (j = 0; j < tile_size; j++){
 			gold[i * out_words_adj + j] = (token_t) 2*(seq++);
-			// out[i * out_words_adj + j] = 0;
-			//printf("%d, ", gold[i * out_words_adj + j]);
+			out[i * out_words_adj + j] = 0;
 		}
+		
+	}
 	
     // asm volatile ("fence rw, rw");
 	printf("Init buf complete\n");
@@ -175,7 +242,7 @@ int main(int argc, char * argv[])
 	}
 	// printf("Checkpoint 2\n");
 
-	in_len = in_words_adj+2;
+	in_len = in_words_adj+SYNC_BITS;
 	out_len = out_words_adj;
 	in_size = in_len * sizeof(token_t);
 	out_size = out_len * sizeof(token_t);
@@ -222,9 +289,13 @@ int main(int argc, char * argv[])
 		}
 
 		// Allocate memory
-		gold = aligned_malloc(out_size*num_tiles);
-		out = aligned_malloc(out_size*num_tiles);
-		mem = aligned_malloc(mem_size);
+		gold = aligned_malloc(out_size*num_tiles+10);
+		out = aligned_malloc(out_size*num_tiles+10);
+		mem = aligned_malloc(mem_size+10);
+
+		
+		printf("  gold buffer base-address = %p\n", gold);
+		printf("  out buffer base-address = %p\n", out);
 		printf("  memory buffer base-address = %p\n", mem);
 
 		// Alocate and populate page table
@@ -286,52 +357,32 @@ int main(int argc, char * argv[])
 			int store_done_prev = 0;
         	int load_turn = 1;
 			// int tiles_read = 0;
-			while ( write_tile < num_tiles) {
-			// while ( !done) {
-				done = ioread32(dev, STATUS_REG);
-				// tiles_read = ioread32(dev, TILED_APP_NUM_TILES_REG);
-				// load_mem(mem, &tile); 
-				// store_mem(mem, &tile); 
-				// temp_rd_wr_enable = ioread32(dev, TILED_APP_RD_WR_ENABLE_REG);
-				// printf("RD WR EN: %d\n", temp_rd_wr_enable);
-				// //esp_flush(coherence);
-				// //if(done != done_prev || store_done_prev != mem[1]){
-				// 	done_prev = done;
-				// 	store_done_prev = mem[1];
-				// 	printf("Done: %d, Store Done bit: %d\n", done, mem[1]);
-				// //}
-				// printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",num_tiles, load_turn, mem[0], mem[1], read_tile, write_tile, done);
-				load_mem(mem, gold, &read_tile);
-				store_mem(out, mem, out_offset, &write_tile);
-				// if((load_turn && load_mem(mem, gold, &read_tile))||((!load_turn) && store_mem(out, mem, out_offset, &write_tile)) ){
-				// 	load_turn = !load_turn;
-				// 	//printf("load_turn: %d read_tile: %d done: %d\n", load_turn, read_tile, done);
-				// // printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",tiles_read, load_turn, mem[0], mem[1], read_tile, write_tile, done);
-				// }
-
+			// while ( write_tile < 7) {
+			// printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",num_tiles, load_turn, mem[0], mem[1], read_tile, write_tile, done);
 				
-
+			load_mem(mem, gold, &read_tile); 
+			// while ( write_tile < num_tiles) {
+			while ( !done) {
+				done = ioread32(dev, STATUS_REG);
+				// printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",num_tiles, load_turn, mem[0], mem[1], read_tile, write_tile, done);
+				// for(int in = 0; in< (in_len+out_len); in++)
+				// 	printf("%d ", mem[in]);
+				// printf("\n");
+				store_mem(out, mem, out_offset, &write_tile, &read_tile, gold);
 				done &= STATUS_MASK_DONE;
-				// if(load_turn && load_mem(mem, gold, &read_tile)){
-				// 	load_turn = !load_turn;
-				// 	printf("load_turn: %d read_tile: %d done: %d\n", load_turn, read_tile, done);
-				// }
-				// if((!load_turn) && store_mem(out, mem, out_offset, &write_tile)){
-				// 	load_turn = !load_turn;
-				// 	printf("load_turn: %d write_tile: %d done: %d\n", load_turn, write_tile, done);
-				// }
-
-				asm volatile ("fence rw, rw");
+				// asm volatile ("fence rw, rw");
 
 			}
 			//What is this doing?
 			// iowrite32(dev, CMD_REG, 0x0);
-			// printf("Load Done bit: %d\n", mem[0]);
-			// printf("Store Done bit: %d\n", mem[1]);
-			// for(int i = 0; i< in_len; i++)
-			// 	printf("in bit %d: %d\n", i-2, mem[i]);
-			// for(int i = 0; i< num_tiles*tile_size; i++)
-			// 	printf("out bit %d: %d\n", i, out[i]);
+			printf("Load Done bit: %d\n", mem[0]);
+			printf("Store Done bit: %d\n", mem[1]);
+			for(int i = 0; i< in_len; i++)
+				printf("in bit %d: %d\n", i-SYNC_BITS, mem[i]);
+			for(int i = 0; i< tile_size; i++)
+				printf("in bit %d: %d\n", i, mem[in_len+i]);
+			for(int i = 0; i< num_tiles*tile_size; i++)
+				printf("out bit %d: %d\n", i, out[i]);
 			
 			printf("  Done\n");
 			printf("  validating...\n");

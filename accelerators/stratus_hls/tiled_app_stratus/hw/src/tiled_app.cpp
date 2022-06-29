@@ -12,23 +12,31 @@
 
 // Processes
 
+#define SYNC_BITS 1
+#define LOAD_STATE_WAIT_FOR_INPUT_SYNC 0
+#define LOAD_STATE_INIT_DMA 1
+#define LOAD_STATE_READ_DMA 2
+#define LOAD_STATE_STORE_HANDSHAKE 3
+#define LOAD_STATE_PROC_DONE 4
+
+#define STORE_STATE_WAIT_FOR_HANDSHAKE 0
+#define STORE_STATE_DMA_INIT 1
+#define STORE_STATE_DMA_SEND 2
+#define STORE_STATE_SYNC 3
+#define STORE_STATE_LOAD_HANDSHAKE 4
+#define STORE_STATE_PROC_ACC_DONE 5
+
 void tiled_app::load_input()
 {
 
     // Reset
     {
         HLS_PROTO("load-reset");
-
-        // this->reset_load_input();
-
+        load_iter_dbg.write(0);
+        load_state_dbg.write(0);
         input_ready.req.reset_req();
-
         output_ready.ack.reset_ack();
         this->reset_dma_read();
-        
-	    //load_store_cfg_done.req.reset_req();
-
-	    //load_store_cfg_done.ack.reset_ack();
         wait();
     }
 
@@ -36,7 +44,6 @@ void tiled_app::load_input()
     /* <<--params-->> */
     int32_t num_tiles;
     int32_t tile_size;
-    // int32_t rd_wr_enable;
     conf_info_t config;
     {
         HLS_PROTO("load-config");
@@ -48,164 +55,89 @@ void tiled_app::load_input()
         /* <<--local-params-->> */
         num_tiles = config.num_tiles;
         tile_size = config.tile_size;
-        // rd_wr_enable = config.rd_wr_enable;
     }
-
    
     // Load
     {
-        //if(rd_wr_enable == 0){
-            HLS_PROTO("load-dma");
-            wait();
-
-            bool ping = true;
-
-            //uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT) * num_tiles;
-            // Batching
-            for (uint16_t b = 0; b < num_tiles; b++)
-            {
-                HLS_PROTO("load-tile-loop");
-                wait();
-                HLS_UNROLL_LOOP(OFF);
-                {
-                    //{   // Read synchronizer   
-                    uint64_t data = 1;
-                    // uint64_t data;
-                    //Read from DMA
+        HLS_PROTO("load-dma");
+        wait();
+	    int64_t load_state = LOAD_STATE_INIT_DMA;
+        bool ping = true;
+        int32_t curr_tile = 0;
+        uint32_t offset = SYNC_BITS; //0;
+        uint32_t sp_offset = 0;
+        uint32_t length = tile_size; // round_up(tile_size, DMA_WORD_PER_BEAT);
+        // uint32_t read = 0;
+        while(true){
+            HLS_UNROLL_LOOP(OFF);
+            load_state_dbg.write(load_state);
+            load_iter_dbg.write(curr_tile);
+            switch(load_state){
+                case LOAD_STATE_WAIT_FOR_INPUT_SYNC: {
+                    int64_t data = 0;
                     sc_dt::sc_bv<DMA_WIDTH> dataBvin;
                     dma_info_t dma_info2(0, 1, DMA_SIZE);
-
-                    //Read from DMA
-                    // sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-    
-                    //Wait for 1
-                    do {
-                        HLS_PROTO("load-read-sync");
-                        HLS_UNROLL_LOOP(OFF);
-                        this->dma_read_ctrl.put(dma_info2);
-                        wait();
-                        dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
-                        wait();
-                        data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
-                        wait();
-                    }
-                    while(data==0);
+                    this->dma_read_ctrl.put(dma_info2);
+                    wait();
+                    dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
+                    wait();
+                    data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
+                    wait();
+                    if(data == 1) load_state = LOAD_STATE_INIT_DMA;
+                    else load_state = LOAD_STATE_WAIT_FOR_INPUT_SYNC;
                 }
-
-
-                // #ifndef STRATUS_HLS
-                //     ESP_REPORT_INFO("Looping Load sync for tile %u/%u, data=%lu DONE", b, num_tiles, data);
-                // #endif
-                // wait();
-                // //}  
-                // wait();
-
-                {
-                    uint32_t offset = 2* DMA_WORD_PER_BEAT ; //0;
-                    uint32_t sp_offset = 0;
-                    uint32_t length = round_up(tile_size, DMA_WORD_PER_BEAT);
-                    // #ifndef STRATUS_HLS
-                    //     ESP_REPORT_INFO("Load sync for rem===%u", length);
-                    // #endif
-                    // Chunking
-                    for (int rem = length; rem > 0; rem -= PLM_IN_WORD)
+                break;
+        
+                case LOAD_STATE_INIT_DMA : {
+                    uint32_t len = length > PLM_IN_WORD ? PLM_IN_WORD : length;
+                    dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len / DMA_WORD_PER_BEAT, DMA_SIZE);
+                    this->dma_read_ctrl.put(dma_info);
+                    load_state = LOAD_STATE_READ_DMA;
+                }
+                break;
+                case LOAD_STATE_READ_DMA: {
+                    uint32_t len = length > PLM_IN_WORD ? PLM_IN_WORD : length;
+                    for (uint16_t i = 0; i < len; i += DMA_WORD_PER_BEAT)
                     {
-                        // #ifndef STRATUS_HLS
-                        //     ESP_REPORT_INFO("Load sync for rem=%u", rem);
-                        // #endif
-                        wait();
-                        // Configure DMA transaction
-                        uint32_t len = rem > PLM_IN_WORD ? PLM_IN_WORD : rem;
-                        dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len / DMA_WORD_PER_BEAT, DMA_SIZE);
-                        offset += len;
-
-                        this->dma_read_ctrl.put(dma_info);
-                        for (uint16_t i = 0; i < len; i += DMA_WORD_PER_BEAT)
-                        {
-                            HLS_BREAK_DEP(plm_in_ping);
-                            HLS_BREAK_DEP(plm_in_pong);
-                            // HLS_BREAK_DEP(plm);
-
-                            sc_dt::sc_bv<DMA_WIDTH> dataBv;
-
-                            dataBv = this->dma_read_chnl.get();
-                            wait();
-
-                            // Write to PLM (all DMA_WORD_PER_BEAT words in one cycle)
-                            for (uint16_t k = 0; k < DMA_WORD_PER_BEAT; k++)
-                            {
-                                HLS_UNROLL_SIMPLE;
-                                //plm[sp_offset + i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
-                                
-                                if (ping)
-                                    plm_in_ping[sp_offset + i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
-                                else
-                                    plm_in_pong[sp_offset + i + k] = dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH).to_int64();
-                                
-                                // #ifndef STRATUS_HLS
-                                // #ifdef PRINT_ALL
-                                // uint64_t printval = (ping)?plm_in_ping[sp_offset + i + k].to_int64():plm_in_pong[sp_offset + i + k].to_int64();
-                                // ESP_REPORT_INFO("TILE %u: LOAD RECEIVED %u, SP INDEX:%u, ping:%u", b, printval, (sp_offset + i + k), ping);
-                                // #endif
-                                // #endif
-                            }
-                        }
-                        sp_offset += PLM_IN_WORD;
-                    }
-                }
-
-                { 
-                    int data = 0;
-                    sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-                    // #ifndef STRATUS_HLS
-                    //     ESP_REPORT_INFO("Before Store sync for tile %u offset %u", b, sync_offset);
-                    // #endif
-                    
-                    dma_info_t dma_info1(1, 1, DMA_SIZE);
-
-                    // Wait for 0
-                    do {
-                        HLS_PROTO("load-write-sync");
                         HLS_UNROLL_LOOP(OFF);
-                        this->dma_read_ctrl.put(dma_info1);
+                        HLS_BREAK_DEP(plm_in_ping);
+                        HLS_BREAK_DEP(plm_in_pong);
+                        
+                        sc_dt::sc_bv<DMA_WIDTH> dataBv;
+                        dataBv = this->dma_read_chnl.get();
                         wait();
-                        dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
-                        wait();
-                        data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
-                        //data = data>>32;
-                        // wait();
+                        if (ping)
+                            plm_in_ping[sp_offset + i] =dataBv.range( DATA_WIDTH - 1, 0).to_int64();
+                        else
+                            plm_in_pong[sp_offset + i] = dataBv.range( DATA_WIDTH - 1, 0).to_int64();
+        
                     }
-                    while(data==1);
-
-                    // #ifndef STRATUS_HLS
-                    //     ESP_REPORT_INFO("Looping Store sync for tile %u/%u, offset=%u data=%lu OVER", b, num_tiles, sync_offset, data);
-                    // #endif
-
+                    load_state = LOAD_STATE_STORE_HANDSHAKE;
                 }
+                break;
+                case LOAD_STATE_STORE_HANDSHAKE: {
+                    this->load_compute_handshake();
+                    wait();
+                    this->store_compute_handshake();
+                    wait();
+                    if(curr_tile == num_tiles) load_state = LOAD_STATE_PROC_DONE;
+                    else load_state = LOAD_STATE_WAIT_FOR_INPUT_SYNC;
+                    curr_tile++;
+                }
+                break;
+                case LOAD_STATE_PROC_DONE:{
+                    this->process_done();
+                }
+                break;
 
-                this->load_compute_handshake();
-                wait();
-                // plm_in_ping[0] = 1;
-                //this->load_store_cfg_handshake();
-                // Write to DMA
-
-                this->store_compute_handshake();
-
-                ping = !ping;
+                default: {
+                    break;
+                }
 
             }
-        //}
-        // this->process_done();
-        // this->accelerator_done();
-    }
-
-    // Conclude
-    {
-        // this->process_done();
-        HLS_PROTO("load-process-done");
-        this->process_done();
-        // this->accelerator_done();
-    }
+            wait();
+        }
+	}
 }
 
 
@@ -215,17 +147,12 @@ void tiled_app::store_output()
     // Reset
     {
         HLS_PROTO("store-reset");
-
-        // this->reset_store_output();
-	    // // load_store_cfg_done.ack.reset_ack();
-	    // //load_store_cfg_done.req.reset_req();
-
-
+	    store_iter_dbg.write(0);
+        store_state_dbg.write(0);
         input_ready.ack.reset_ack();
         output_ready.req.reset_req();
         wait();
         // explicit PLM ports reset if any
-
         this->reset_accelerator_done();
         this->reset_dma_write();
         // User-defined reset code
@@ -238,7 +165,6 @@ void tiled_app::store_output()
     int32_t num_tiles;
     int32_t tile_size;
     conf_info_t config;
-    // int32_t rd_wr_enable;
     {
         HLS_PROTO("store-config");
 
@@ -249,163 +175,100 @@ void tiled_app::store_output()
         /* <<--local-params-->> */
         num_tiles = config.num_tiles;
         tile_size = config.tile_size;
-        // rd_wr_enable = config.rd_wr_enable;
     }
 
     // Store
-    {// Store - only if rd_wr_enable is 1
-        //if(rd_wr_enable == 1){
-            
-            HLS_PROTO("store-dma");
-            wait();
+    {
+        HLS_PROTO("store-dma");
+        // wait();
 
-            bool ping = true;
-            // Batching
-            for (uint16_t b = 0; b < num_tiles; b++)
-            {
-                HLS_PROTO("store-tile-loop");
-                wait();
-                HLS_UNROLL_LOOP(OFF);
+        bool ping = true;
+        uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT)+ SYNC_BITS*DMA_WORD_PER_BEAT;
+        uint32_t offset = store_offset;
+        uint32_t sp_offset = 0;
+        int32_t curr_tile = 0;
+        uint32_t length = round_up(tile_size, DMA_WORD_PER_BEAT);
+        uint32_t store_state = STORE_STATE_WAIT_FOR_HANDSHAKE;
 
-                uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT)+ 2*DMA_WORD_PER_BEAT;
-                uint32_t offset = store_offset;
-                uint32_t sp_offset = 0;
-
-                wait();
-                this->compute_load_handshake();
-                {
-                    HLS_PROTO("store-read-sync");
+        while(true){
+            HLS_UNROLL_LOOP(OFF);
+            store_state_dbg.write(store_state);
+            store_iter_dbg.write(curr_tile);
+            switch(store_state){
+                case STORE_STATE_WAIT_FOR_HANDSHAKE:{
+                    this->compute_load_handshake();
                     wait();
-                    int syn_len = 1;
-                    sc_dt::sc_bv<DMA_WIDTH> dataBvout2;
-                    dma_info_t dma_info3(0, syn_len/ DMA_WORD_PER_BEAT, DMA_SIZE);
-                    this->dma_write_ctrl.put(dma_info3);
-                    dataBvout2.range(DMA_WIDTH - 1, 0) = 0;
-                    this->dma_write_chnl.put(dataBvout2);
-                    wait();
+                    store_state = STORE_STATE_DMA_INIT;
                 }
-                this->compute_store_handshake();
-
-                //this->store_load_cfg_handshake();
-                wait();
-
-                // uint32_t sync_offset = 1;
-                // dma_info_t dma_info2(sync_offset, 1, DMA_SIZE);
-
-                        //Write to DMA
-                // this->dma_write_ctrl.put(dma_info2);
-                // wait();
-                // //write 1
-                // dataBvout.range(DMA_WIDTH - 1, 0) = 3;
-                // this->dma_write_chnl.put(dataBvout);
-                // wait();
-                //
-               
-
-                // #ifndef STRATUS_HLS
-                // uint32_t sync_offset = 1;
-                // #endif
-                uint32_t length = round_up(tile_size, DMA_WORD_PER_BEAT);
-
-                // Chunking
-                for (int rem = length; rem > 0; rem -= PLM_OUT_WORD)
-                {
-                    #ifndef STRATUS_HLS
-                        ESP_REPORT_INFO("Store sync for rem=%lu", rem);
-                    #endif
-                    // Configure DMA transaction
-                    uint32_t len = rem > PLM_OUT_WORD ? PLM_OUT_WORD : rem;
+                break;
+                case STORE_STATE_DMA_INIT: {
+                    uint32_t len = length > PLM_OUT_WORD ? PLM_OUT_WORD : length;
                     dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len / DMA_WORD_PER_BEAT, DMA_SIZE);
-                    offset += len;
-
                     this->dma_write_ctrl.put(dma_info);
-   
+                    store_state = STORE_STATE_DMA_SEND;
+                    // wait();
+                }
+                break;
+
+                case STORE_STATE_DMA_SEND: {
+                    uint32_t len = length > PLM_OUT_WORD ? PLM_OUT_WORD : length;
                     for (uint16_t i = 0; i < len; i += DMA_WORD_PER_BEAT)
                     {
+			            HLS_UNROLL_LOOP(OFF);
                         sc_dt::sc_bv<DMA_WIDTH> dataBv;
-
                         // Read from PLM
                         wait();
-                        for (uint16_t k = 0; k < DMA_WORD_PER_BEAT; k++)
-                        {
-                            HLS_UNROLL_SIMPLE;
-                            //dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm[sp_offset + i + k];
-                            if (ping)
-                                dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm_in_ping[sp_offset + i + k];
-                            else
-                                dataBv.range((k+1) * DATA_WIDTH - 1, k * DATA_WIDTH) = plm_in_pong[sp_offset + i + k];
-                            #ifndef STRATUS_HLS
-                            #ifdef PRINT_ALL
-                            ESP_REPORT_INFO("TILE %u: SENDING FROM HW %u, SP INDEX: %u, ping:%u", b, dataBv.to_int64(), (sp_offset + i + k), ping);
-                            #endif
-                            #endif
-                        }
+                        if (ping)
+                            dataBv.range(DATA_WIDTH - 1, 0) = plm_in_ping[sp_offset + i];
+                        else
+                            dataBv.range(DATA_WIDTH - 1, 0) = plm_in_pong[sp_offset + i];
                         this->dma_write_chnl.put(dataBv);
                         wait();
                     }
-                    sp_offset += PLM_OUT_WORD;
-                }
-                //STORE SYNCHRONIZATION
-                //Write to DMA
+                    store_state = STORE_STATE_SYNC;
+                } 
+                break;
 
-                //dma_info_t dma_info2(0, 1, DMA_SIZE);
+                case STORE_STATE_SYNC: {
+                    dma_info_t dma_info(0, 1, DMA_SIZE);
+                    this->dma_write_ctrl.put(dma_info);
+                    wait();
+                    sc_dt::sc_bv<DMA_WIDTH> dataBv;
+                    dataBv.range(DATA_WIDTH - 1, 0) = 2;
+                    this->dma_write_chnl.put(dataBv);
+                    store_state = STORE_STATE_LOAD_HANDSHAKE;
+
+                }
+                break;
+
+                case STORE_STATE_LOAD_HANDSHAKE:{
+                    this->compute_store_handshake();
+		            wait();
+                    if(curr_tile == num_tiles){
+                        store_state = STORE_STATE_PROC_ACC_DONE;
+                    }
+                    else store_state = STORE_STATE_WAIT_FOR_HANDSHAKE;
+                    curr_tile++;
+                }
+                break;
+                case STORE_STATE_PROC_ACC_DONE: {
+                    this->accelerator_done();
+                    this->process_done();
+                }break;
+                default: {
+                    break;
+                }
                 
-                // wait();
-                {
-                    HLS_PROTO("store-write-sync");
-                    wait();
-                    int syn_len = 1;
-                    sc_dt::sc_bv<DMA_WIDTH> dataBvout2;
-                    dma_info_t dma_info2(1, syn_len/ DMA_WORD_PER_BEAT, DMA_SIZE);
-                    this->dma_write_ctrl.put(dma_info2);
-                    // wait();
-                    dataBvout2.range(DMA_WIDTH - 1, 0) = 1;
-                    this->dma_write_chnl.put(dataBvout2);
-                    wait();
-                }
-
-
-
-                // wait();
-
-                // dma_info_t dma_info1(0, 1, DMA_SIZE);
-                // this->dma_write_ctrl.put(dma_info1);
-                // sc_dt::sc_bv<DMA_WIDTH> dataBvout;
-                // wait();
-                // //write 0
-                // dataBvout.range(DMA_WIDTH - 1, 0) = 0;
-                // this->dma_write_chnl.put(dataBvout);
-                // wait();
-
-
-                 // { 
-                   
-
-                    // compute == synchronizer    
-                    //send the output ready ack
-               // }    
-                // this->load_store_cfg_handshake();
-                ping = !ping;
-
-                // if(b==(num_tiles-1)){
-                //     this->process_done();
-                //     this->accelerator_done();
-                // }
             }
-        //}
-        // this->process_done();
-        // this->accelerator_done();
-    }
-
-    // Conclude
-    {
-        // this->compute_store_handshake();
-        // wait();
-        HLS_PROTO("store-process-done");
-        this->process_done();
-        this->accelerator_done();
+            wait();
+        }
     }
 }
+
+
+
+
+
 
 
 // compute == synchronizer   

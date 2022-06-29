@@ -33,6 +33,10 @@ public:
         cfg.bind_with(*this);
 	    load_store_cfg_done.bind_with<DMA_WIDTH>(*this);
 
+        HLS_PRESERVE_SIGNAL(load_iter_dbg);
+        HLS_PRESERVE_SIGNAL(store_iter_dbg);
+        HLS_PRESERVE_SIGNAL(load_state_dbg);
+        HLS_PRESERVE_SIGNAL(store_state_dbg);
         // Map arrays to memories
         /* <<--plm-bind-->> */
         //HLS_MAP_plm(plm, PLM_OUT_NAME);
@@ -48,6 +52,10 @@ public:
 
     // Processes
 
+    sc_signal< sc_int<64> > load_iter_dbg;
+    sc_signal< sc_int<64> > store_iter_dbg;
+    sc_signal< sc_int<64> > load_state_dbg;
+    sc_signal< sc_int<64> > store_state_dbg;
     // Load the input data
     void load_input();
 
