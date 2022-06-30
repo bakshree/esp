@@ -54,6 +54,9 @@ void rt_accel::load_input()
         // for (uint16_t b = 0; b < 1; b++)
         // {
             wait();
+            #ifndef STRATUS_HLS
+                ESP_REPORT_INFO("Inside Load");
+            #endif
 #if (DMA_WORD_PER_BEAT == 0)
             uint32_t length = 3*img_width*img_height;
 #else
@@ -178,6 +181,9 @@ void rt_accel::store_output()
         for (uint16_t b = 0; b < 1; b++)
         {
             wait();
+                #ifndef STRATUS_HLS
+                    ESP_REPORT_INFO("Inside Store");
+                #endif
 #if (DMA_WORD_PER_BEAT == 0)
             uint32_t length = 3*img_width*img_height;
 #else
@@ -304,7 +310,9 @@ void rt_accel::compute_kernel()
                 in_len/=3;
 
                 this->compute_load_handshake();
-
+                #ifndef STRATUS_HLS
+                    ESP_REPORT_INFO("Inside Compute");
+                #endif
                 // Computing phase implementation
                 for (int i = 0; i < in_len; i++) {
                     // if (ping)
@@ -328,6 +336,9 @@ void rt_accel::compute_kernel()
                     plm_out_ping[3*i] =   outputs.x;
                     plm_out_ping[3*i+1] = outputs.y;
                     plm_out_ping[3*i+2] = outputs.z;
+                    // plm_out_ping[3*i] =   inputs.x;
+                    // plm_out_ping[3*i+1] = inputs.y;
+                    // plm_out_ping[3*i+2] = inputs.z;
                 }
 
                 out_rem -= PLM_OUT_WORD;

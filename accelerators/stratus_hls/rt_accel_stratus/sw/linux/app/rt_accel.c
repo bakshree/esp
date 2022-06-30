@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "libesp.h"
 #include "cfg.h"
-
+#include "stdio.h"
+#include "math.h"
 static unsigned in_words_adj;
 static unsigned out_words_adj;
 static unsigned in_len;
@@ -12,17 +13,38 @@ static unsigned out_size;
 static unsigned out_offset;
 static unsigned size;
 
+ float fov = 1.0472; // Radians
 /* User-defined code */
 static int validate_buffer(token_t *out, token_t *gold)
 {
 	int i;
 	int j;
 	unsigned errors = 0;
+	FILE *fp;
+	fp = fopen("out_rt_fpga.ppm", "wb");
+	// ofstream ofs("out_rt_fpga.ppm", ios::binary);
+    // ofs << "P6\n" << img_width << " " << img_height << "\n255\n";
+	fprintf(fp, "%s\n%d %d\n%s\n", "P6", img_width, img_height, "255");
 
-	for (i = 0; i < 1; i++)
-		for (j = 0; j < 3*img_width*img_height; j++)
-			if (gold[i * out_words_adj + j] != out[i * out_words_adj + j])
-				errors++;
+    for (int j = 0; j < img_width*img_height; j++){
+        float color[3];
+        color[0] = out[3*j]    ;
+        color[1] = out[3*j + 1];
+        color[2] = out[3*j + 2];
+
+        float max_val = color[0]>color[1]? color[0]: color[1];
+		max_val = max_val>color[2]?max_val:color[2];
+        for (int chan = 0; chan<2; chan++){
+            // ofs << (char) (255 * color[chan] / std::max);
+			fprintf(fp, "%c", (char) (255 * color[chan] / max_val));
+        }
+    }
+    fclose(fp);
+
+	// for (i = 0; i < 1; i++)
+	// 	for (j = 0; j < 3*img_width*img_height; j++)
+	// 		if (gold[i * out_words_adj + j] != out[i * out_words_adj + j])
+	// 			errors++;
 
 	return errors;
 }
@@ -33,14 +55,36 @@ static void init_buffer(token_t *in, token_t * gold)
 {
 	int i;
 	int j;
+	// for (i = 0; i < 1; i++)
+	// 	for (j = 0; j < 3*img_width*img_height; j++)
+	// 		in[i * in_words_adj + j] = (token_t) j;
 
-	for (i = 0; i < 1; i++)
-		for (j = 0; j < 3*img_width*img_height; j++)
-			in[i * in_words_adj + j] = (token_t) j;
+	// for (i = 0; i < 1; i++)
+	// 	for (j = 0; j < 3*img_width*img_height; j++)
+	// 		gold[i * out_words_adj + j] = (token_t) j;
 
-	for (i = 0; i < 1; i++)
-		for (j = 0; j < 3*img_width*img_height; j++)
-			gold[i * out_words_adj + j] = (token_t) j;
+	for (int i = 0; i < 1; i++)
+        for (int j = 0; j < img_width*img_height; j++){ // total loop: 3*img_width*img_height
+            float dir_x = ((j % img_width + 0.5) - img_width / 2.);
+            float dir_y = (-(j / img_width + 0.5) + img_height / 2.);
+            float dir_z = (-img_height / (2. * tan(fov / 2.)));
+
+            //vec3 data = normalized(dir_x, dir_y, dir_z);
+
+            in[i * in_words_adj + 3*j] =     dir_x ; //data[0];
+            in[i * in_words_adj + 3*j + 1] = dir_y ; //data[1];
+            in[i * in_words_adj + 3*j + 2] = dir_z ; //data[2];
+
+        }
+
+	for (int i = 0; i < 1; i++)
+        for (int j = 0; j < 3*img_width*img_height; j++){
+            // std::string token;
+            // buffer>>token;
+            //gold[i * out_words_adj + j] = std::stof(token);
+            gold[i * out_words_adj + j] = in[i * out_words_adj + j];
+            // buffer>>token; // , removal
+        }
 }
 
 

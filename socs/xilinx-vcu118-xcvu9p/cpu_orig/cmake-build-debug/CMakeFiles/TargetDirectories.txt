@@ -1,0 +1,3 @@
+/mnt/c/Users/David Wang/Desktop/CS533/cpu/cmake-build-debug/CMakeFiles/cpu.dir
+/mnt/c/Users/David Wang/Desktop/CS533/cpu/cmake-build-debug/CMakeFiles/edit_cache.dir
+/mnt/c/Users/David Wang/Desktop/CS533/cpu/cmake-build-debug/CMakeFiles/rebuild_cache.dir

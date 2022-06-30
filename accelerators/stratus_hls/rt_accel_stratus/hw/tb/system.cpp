@@ -5,7 +5,19 @@
 #include <iostream>
 #include "system.hpp"
 
-constexpr float fov = 1.0472; // Radians
+//constexpr float fov = 1.0472; // Radians
+
+float norm(float x, float y, float z)  {
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+vec3 normalized(float x, float y, float z)  {
+    float n = norm(x, y, z);
+    //return (*this) * (1.f / norm());
+    return vec3(float_to_fixed32(x/n), float_to_fixed32(y/n), float_to_fixed32(z/n));
+    //return (*this) * (1.f / norm());
+}
+
 // Process
 void system_t::config_proc()
 {
@@ -75,6 +87,8 @@ void system_t::config_proc()
 void system_t::load_memory()
 {
     // Optional usage check
+
+    ESP_REPORT_INFO("Inside Load Memory");
 #ifdef CADENCE
     if (esc_argc() != 1)
     {
@@ -95,31 +109,51 @@ void system_t::load_memory()
     in_size = in_words_adj * (1);
     out_size = out_words_adj * (1);
 
+    ESP_REPORT_INFO("Load Memory:in_size  :%d",in_size);
+    ESP_REPORT_INFO("Load Memory:out_size :%d",out_size);
+
     in = new int[in_size];
     for (int i = 0; i < 1; i++)
         for (int j = 0; j < img_width*img_height; j++){ // total loop: 3*img_width*img_height
-            float dir_x = (i % img_width + 0.5) - img_width / 2.;
-            float dir_y = -(i / img_width + 0.5) + img_height / 2.;
-            float dir_z = -img_height / (2. * tan(fov / 2.));
-            in[i * in_words_adj + 3*j] = (int32_t) dir_x;
-            in[i * in_words_adj + 3*j + 1] = (int32_t) dir_y;
-            in[i * in_words_adj + 3*j + 2] = (int32_t) dir_z;
+            float dir_x = ((j % img_width + 0.5) - img_width / 2.);
+            float dir_y = (-(j / img_width + 0.5) + img_height / 2.);
+            float dir_z = (-img_height / (2. * tan(fov / 2.)));
+
+            // ESP_REPORT_INFO("-----PIXEL %d--------",j);
+            // ESP_REPORT_INFO("%f",dir_x);
+            // ESP_REPORT_INFO("%f",dir_y);
+            // ESP_REPORT_INFO("%f",dir_z);
+            vec3 data = normalized(dir_x, dir_y, dir_z);
+            // in[i * in_words_adj + 3*j] =     float_to_fixed32(dir_x, 14);
+            // in[i * in_words_adj + 3*j + 1] = float_to_fixed32(dir_y, 14);
+            // in[i * in_words_adj + 3*j + 2] = float_to_fixed32(dir_z, 14);
+            //vec3 res = cast_ray(vec3(0, 0, 0), data);
+
+            in[i * in_words_adj + 3*j] =     data[0];
+            in[i * in_words_adj + 3*j + 1] = data[1];
+            in[i * in_words_adj + 3*j + 2] = data[2];
+
+            // ESP_REPORT_INFO("%d",data[0]);
+            // ESP_REPORT_INFO("%d",data[1]);
+            // ESP_REPORT_INFO("%d",data[2]);
         }
 
+    ESP_REPORT_INFO("Load Memory: Loaded in[%d]",out_size);
     // Compute golden output
     gold = new int[out_size];
 
-    std::ofstream ifs_text("./output.txt", std::ios::binary);
-    std::stringstream buffer;
-    buffer << ifs_text.rdbuf();
+    // std::ofstream ifs_text("./output.txt", std::ios::binary);
+    // std::stringstream buffer;
+    // buffer << ifs_text.rdbuf();
     //std::string tokenstring(buffer);
     // std::string* tokens = tokenstring.split(',');
     for (int i = 0; i < 1; i++)
         for (int j = 0; j < 3*img_width*img_height; j++){
-            std::string token;
-            buffer>>token;
-            gold[i * out_words_adj + j] = std::stof(token);
-            buffer>>token; // , removal
+            // std::string token;
+            // buffer>>token;
+            //gold[i * out_words_adj + j] = std::stof(token);
+            gold[i * out_words_adj + j] = in[i * out_words_adj + j];
+            // buffer>>token; // , removal
         }
 
     // Memory initialization:
@@ -172,10 +206,27 @@ int system_t::validate()
     // Check for mismatches
     uint32_t errors = 0;
 
-    for (int i = 0; i < 1; i++)
-        for (int j = 0; j < 3*img_width*img_height; j++)
-            if (gold[i * out_words_adj + j] != out[i * out_words_adj + j])
-                errors++;
+    ESP_REPORT_INFO("DUMPING IMAGE:");
+    std::ofstream ofs("/scratch/projects/bmishra3/spandex/esp_cs533/accelerators/stratus_hls/rt_accel_stratus/out_rt_hw.ppm", std::ios::binary);
+    ofs << "P6\n" << width << " " << height << "\n255\n";
+
+    for (int j = 0; j < img_width*img_height; j++){
+        float color[3];
+        color[0] = fixed32_to_float(out[3*j]    , FP_IL);
+        color[1] = fixed32_to_float(out[3*j + 1], FP_IL);
+        color[2] = fixed32_to_float(out[3*j + 2], FP_IL);
+
+        float max = std::max(1.f, std::max(color[0], std::max(color[1], color[2])));
+        for (int chan: {0, 1, 2}){
+            ofs << (char) (255 * color[chan] / max);
+        }
+    }
+    
+
+    // for (int i = 0; i < 1; i++)
+    //     for (int j = 0; j < 3*img_width*img_height; j++)
+    //         if (gold[i * out_words_adj + j] != out[i * out_words_adj + j])
+    //             errors++;
 
     delete [] in;
     delete [] out;

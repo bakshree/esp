@@ -11,6 +11,9 @@
 
 #include "esp_templates.hpp"
 
+//Bakshree
+#include "fixed_point.h"
+
 const size_t MEM_SIZE = 38400 / (DMA_WIDTH/8);
 
 #include "core/systems/esp_system.hpp"
@@ -18,6 +21,11 @@ const size_t MEM_SIZE = 38400 / (DMA_WIDTH/8);
 #ifdef CADENCE
 #include "rt_accel_wrap.h"
 #endif
+
+
+#define width 40
+#define height 40
+#define fov 1.0472
 
 class system_t : public esp_system<DMA_WIDTH, MEM_SIZE>
 {
@@ -54,9 +62,12 @@ public:
         acc->debug(debug);
 
         /* <<--params-default-->> */
-        img_width = 40;
-        img_height = 40;
+        // img_width = 40;
+        // img_height = 40;
+        img_width = width;
+        img_height = height;
     }
+
 
     // Processes
 
