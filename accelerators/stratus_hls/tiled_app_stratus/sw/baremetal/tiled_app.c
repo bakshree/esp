@@ -24,8 +24,8 @@ static unsigned DMA_WORD_PER_BEAT(unsigned _st)
 #define DEV_NAME "sld,tiled_app_stratus"
 
 /* <<--params-->> */
-const int32_t num_tiles = 5;//12;
-const int32_t tile_size = 1023;
+const int32_t num_tiles = 10;//12;
+const int32_t tile_size = 7;
 const int32_t rd_wr_enable = 0;
 
 static unsigned in_words_adj;
@@ -88,11 +88,6 @@ int load_mem(token_t *in, token_t *gold, int* tile){
 	int offset = 0;// SYNC_BITS;
 
 	if(in[2*tile_size]!=1 && *tile < num_tiles){
-// #ifdef PRINT_DEBUG
-// 		printf("In  sync: %d Loading tile %d: \n",in[0], *tile);
-// 		in[0] = 0;
-// #endif
-
 		for (int j = 0; j < tile_size; j++)
 			in[offset + j] = gold[(*tile)*out_words_adj + j];
 
@@ -384,21 +379,22 @@ int main(int argc, char * argv[])
 	#endif
 			load_mem(mem, gold, &read_tile); 
 			// while ( write_tile < num_tiles) {
-			while ( !done || write_tile < num_tiles) {
+			while ( !done ) {
 				done = ioread32(dev, STATUS_REG);
 
-// #ifdef PRINT_DEBUG
-// 				printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",num_tiles, load_turn, mem[0], mem[1], read_tile, write_tile, done);
-// 				for(int in = 0; in< (in_len+out_len); in++)
-// 					printf("%d ", mem[in]);
-// 				printf("\n");
-// #endif
+#ifdef PRINT_DEBUG
+				printf("tiles: %d load_turn: %d in_sync:%d out_sync:%d read_tile:%d write_tile: %d done: %d\n",num_tiles, load_turn, mem[0], mem[1], read_tile, write_tile, done);
+				for(int in = 0; in< (in_len+out_len); in++)
+					printf("%d ", mem[in]);
+				printf("\n");
+#endif
 
 				store_mem(out, mem, tile_size, &write_tile, &read_tile, gold);
 				done &= STATUS_MASK_DONE;
 				// asm volatile ("fence rw, rw");
 
 			}
+			if(write_tile < num_tiles) store_mem(out, mem, tile_size, &write_tile, &read_tile, gold);
 			//What is this doing?
 			// iowrite32(dev, CMD_REG, 0x0);
 #ifdef PRINT_DEBUG
