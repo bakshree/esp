@@ -76,6 +76,16 @@ uint64_t intvl_write;
 uint64_t start_read;
 uint64_t stop_read;
 uint64_t intvl_read;
+uint64_t start_flush;
+uint64_t stop_flush;
+uint64_t intvl_flush;
+uint64_t start_tiling;
+uint64_t stop_tiling;
+uint64_t intvl_tiling;
+uint64_t start_sync;
+uint64_t stop_sync;
+uint64_t intvl_sync;
+uint64_t spin_flush;
 
 uint64_t start_acc_write;
 uint64_t stop_acc_write;
@@ -101,8 +111,8 @@ token_t *out;
 
 // #define PRINT_DEBUG
 // #define VALIDATE
-#define NUM_TILES 100
-#define TILE_SIZE 1023
+#define NUM_TILES 12
+#define TILE_SIZE 7
 #define SLD_TILED_APP 0x033
 #define DEV_NAME "sld,tiled_app_stratus"
 
@@ -133,7 +143,7 @@ static unsigned coherence;
 			(_sz / CHUNK_SIZE) + 1)
 
 /* Coherence Modes */
-#define COH_MODE 3
+#define COH_MODE 0
 #define ESP
 
 #ifdef ESP
@@ -184,7 +194,16 @@ spandex_config_t spandex_config;
 #define TILED_APP_RD_WR_ENABLE_REG 0x40
 #define SYNC_BITS 1
 
-inline uint32_t read_sync(){
+static inline uint32_t read_sync(){
+	#ifdef ESP
+	#if (COH_MODE==3 || COH_MODE==2 )
+		// Flush because Non Coherent DMA/ LLC Coherent DMA
+		start_flush = get_counter();
+		esp_flush(coherence);
+		stop_flush = get_counter();
+		spin_flush += stop_flush-start_flush;
+	#endif
+	#endif
 	void* dst = (void*)(mem+2*tile_size);
 	int64_t value_64 = 0;
 	asm volatile (
@@ -209,10 +228,17 @@ static inline void update_load_sync(){
 		: "r" (dst), "r" (value_64)
 		: "t0", "t1", "memory"
 	);
+	stop_write = get_counter();
+	intvl_write += stop_write - start_write;
+	start_sync = stop_write ; //get_counter();
 	#ifdef ESP
-	#if (COH_MODE==3)
-		// Flush because Non Coherent DMA
+	#if (COH_MODE==3 || COH_MODE==2 )
+		// Flush because Non Coherent DMA/ LLC Coherent DMA
+		start_flush = get_counter();
 		esp_flush(coherence);
+		stop_flush = get_counter();
+		intvl_flush += (stop_flush - start_flush);
+		start_sync = stop_flush;
 	#endif
 	#endif
 }
@@ -481,17 +507,19 @@ int main(int argc, char * argv[])
 			console_log_header();
 #endif
 			//load_mem(mem, gold, &read_tile); 
+			intvl_flush = 0;
+			intvl_sync = 0;
+			spin_flush = 0;
+			intvl_write = 0;
 			void* dst = (void*)(mem);
 			start_write = get_counter();
-			start_acc_write = start_write;
 			// Load 1st Tile
 			load_mem();
 #ifdef PRINT_DEBUG
 			print_mem(1);
 #endif
 			update_load_sync();
-			stop_write = get_counter();
-			intvl_write = stop_write - start_write;
+			start_tiling = start_write;
 			intvl_read = 0;
 			while ( !done ) {
 				done = ioread32(dev, STATUS_REG);
@@ -501,6 +529,9 @@ int main(int argc, char * argv[])
 #endif
 				int32_t read_done = read_sync();
 				if(read_done==1){
+					stop_sync = get_counter();
+					intvl_sync += stop_sync- start_sync - spin_flush;
+					spin_flush = 0;
 					start_read = get_counter();
 					store_mem();
 					stop_read = get_counter();
@@ -515,10 +546,10 @@ int main(int argc, char * argv[])
 						print_mem(1);
 #endif
 						update_load_sync();
-						stop_write = get_counter();
-						intvl_write += stop_write - start_write;
+						// stop_write = get_counter();
+						// intvl_write += stop_write - start_write;
 					}
-					intvl_read += stop_read - start_read;
+					// intvl_read += stop_read - start_read;
 				}
 				
 				done &= STATUS_MASK_DONE;
@@ -533,8 +564,8 @@ int main(int argc, char * argv[])
 					print_mem(0);
 #endif
 			}
-			stop_acc_write = stop_read;
-			intvl_acc_write = stop_acc_write - start_acc_write;
+			stop_tiling = get_counter();;
+			intvl_tiling = stop_tiling - start_tiling;
 			//What is this doing?
 			iowrite32(dev, CMD_REG, 0x0);
 
@@ -551,7 +582,14 @@ int main(int argc, char * argv[])
 #endif
 			printf("  Tile 	Read Time: %lu\n", intvl_read		);
 			printf("  Tile Write Time: %lu\n", intvl_write		);
-			printf("  Total Tile Time: %lu\n", intvl_acc_write	);
+			printf("  Acc   R/W  Time: %lu\n", intvl_sync		);
+			#ifdef ESP
+			#if (COH_MODE==3 || COH_MODE==2)
+				// Flush because Non Coherent DMA / LLC Coherent DMA
+			printf("  Coh  Flush Time: %lu\n", intvl_flush		);
+			#endif
+			#endif
+			printf("  Total Tile Time: %lu\n", intvl_tiling	);
 		}
 		aligned_free(out);
 		aligned_free(ptable);
