@@ -101,12 +101,14 @@ token_t *out;
 
 // #define PRINT_DEBUG
 // #define VALIDATE
+#define NUM_TILES 100
+#define TILE_SIZE 1023
 #define SLD_TILED_APP 0x033
 #define DEV_NAME "sld,tiled_app_stratus"
 
 /* <<--params-->> */
-const int32_t num_tiles = 10;//12;
-const int32_t tile_size = 7;
+const int32_t num_tiles = NUM_TILES;//12;
+const int32_t tile_size = TILE_SIZE;
 const int32_t rd_wr_enable = 0;
 
 static unsigned in_words_adj;
@@ -131,7 +133,7 @@ static unsigned coherence;
 			(_sz / CHUNK_SIZE) + 1)
 
 /* Coherence Modes */
-#define COH_MODE 2
+#define COH_MODE 3
 #define ESP
 
 #ifdef ESP
@@ -196,7 +198,7 @@ inline uint32_t read_sync(){
 	return (value_64 == 2);
 }
 
-inline void update_load_sync(){
+static inline void update_load_sync(){
 	void* dst = (void*)(mem+2*tile_size);
 	int64_t value_64 = 1;
 	asm volatile (
@@ -207,10 +209,17 @@ inline void update_load_sync(){
 		: "r" (dst), "r" (value_64)
 		: "t0", "t1", "memory"
 	);
+	#ifdef ESP
+	#if (COH_MODE==3)
+		// Flush because Non Coherent DMA
+		esp_flush(coherence);
+	#endif
+	#endif
 }
 
 static inline void load_mem(){
 	void *dst = (void*)(mem);
+	int64_t val_64 = 123;
 	for (int j = 0; j < tile_size; j++){
 		//int64_t value_64 = gold[(read_tile)*out_words_adj + j];
 		asm volatile (
@@ -218,9 +227,9 @@ static inline void load_mem(){
 			"mv t1, %1;"
 			".word 0x0062B02B"
 			: 
-			: "r" (dst), "r" (gold[(read_tile)*out_words_adj + j])
+			: "r" (dst), "r" (val_64)
 			: "t0", "t1", "memory"
-		);
+		); //: "r" (dst), "r" (gold[(read_tile)*out_words_adj + j])
 
 		dst += 8;
 	}
@@ -238,10 +247,10 @@ static inline void store_mem(){
 			"mv t0, %1;"
 			".word 0x0002B30B;"
 			"mv %0, t1"
-			: "=r" (out[(write_tile) * out_words_adj + j])
+			: "=r" (out_val)
 			: "r" (src)
 			: "t0", "t1", "memory"
-		);
+		);//: "=r" (out[(write_tile) * out_words_adj + j])
 		src += 8;
 	}
 	asm volatile ("fence rw, rw");
@@ -310,11 +319,22 @@ inline static void print_mem(int read ){
 	printf("Read  Tile: %d\t||", read_tile);
 	else
 	printf("Store Tile: %d\t||", write_tile);
-	for(int __i = 0; __i < tile_size; __i++)
+	int cntr = 0;
+	for(int __i = 0; __i < tile_size; __i++, cntr++){
 		printf("\t%d", mem[__i]);
+		if(cntr==15){
+			printf("\n");
+			cntr = -1;
+		}
+	}
 	printf("\t||");
-	for(int __i = 0; __i < tile_size; __i++)
+	for(int __i = 0, cntr = 0; __i < tile_size; __i++, cntr++){
 		printf("\t%d", mem[tile_size+__i]);
+		if(cntr==15){
+			printf("\n");
+			cntr = -1;
+		}
+	}
 	printf("\t||\t%d\n", mem[2*tile_size]);
 }
 
@@ -322,8 +342,8 @@ inline static void print_mem(int read ){
 int main(int argc, char * argv[])
 {
 	// printf("Hello World 123\n");
-	int32_t num_tiles = 10;//12;
-	int32_t tile_size = 7;
+	int32_t num_tiles = NUM_TILES;//12;
+	int32_t tile_size = TILE_SIZE;
 
 	#if 1
 	int i;
@@ -475,6 +495,10 @@ int main(int argc, char * argv[])
 			intvl_read = 0;
 			while ( !done ) {
 				done = ioread32(dev, STATUS_REG);
+#ifdef PRINT_DEBUG
+				printf("done:%d\n", done);
+				print_mem(1);
+#endif
 				int32_t read_done = read_sync();
 				if(read_done==1){
 					start_read = get_counter();
@@ -494,7 +518,9 @@ int main(int argc, char * argv[])
 						stop_write = get_counter();
 						intvl_write += stop_write - start_write;
 					}
+					intvl_read += stop_read - start_read;
 				}
+				
 				done &= STATUS_MASK_DONE;
 			}
 			//Fetch last tile
