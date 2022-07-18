@@ -31,6 +31,69 @@ typedef union
   uint32_t spandex_reg;
 } spandex_config_t;
 
+
+
+// #define PRINT_DEBUG
+// #define VALIDATE
+// #define MEM_DUMP 1
+#define NUM_TILES 1200
+#define TILE_SIZE 1024
+#define SLD_TILED_APP 0x033
+#define DEV_NAME "sld,tiled_app_stratus"
+#define SYNC_BITS 1
+
+/* Coherence Modes */
+#define COH_MODE 0
+#define ESP
+
+#ifdef ESP
+// ESP COHERENCE PROTOCOLS
+#define READ_CODE 0x0002B30B
+#define WRITE_CODE 0x0062B02B
+#if(COH_MODE == 3)
+#define COHERENCE_MODE ACC_COH_NONE
+#elif (COH_MODE == 2)
+#define COHERENCE_MODE ACC_COH_LLC
+#elif (COH_MODE == 1)
+#define COHERENCE_MODE ACC_COH_RECALL
+#else
+#define COHERENCE_MODE ACC_COH_FULL
+#endif
+#else
+//SPANDEX COHERENCE PROTOCOLS
+#define COHERENCE_MODE ACC_COH_FULL
+#if (COH_MODE == 3)
+// Owner Prediction
+#define READ_CODE 0x4002B30B
+#define WRITE_CODE 0x2262B82B
+spandex_config_t spandex_config = {.spandex_reg = 0, .r_en = 1, .r_type = 2, .w_en = 1, .w_op = 1, .w_type = 1};
+#elif (COH_MODE == 2)
+// Write-through forwarding
+#define READ_CODE 0x4002B30B
+#define WRITE_CODE 0x2062B02B
+spandex_config_t spandex_config = {.spandex_reg = 0, .r_en = 1, .r_type = 2, .w_en = 1, .w_type = 1};
+#elif (COH_MODE == 1)
+// Baseline Spandex
+#define READ_CODE 0x2002B30B
+#define WRITE_CODE 0x0062B02B
+spandex_config_t spandex_config = {.spandex_reg = 0, .r_en = 1, .r_type = 1};
+#else
+// Fully Coherent MESI
+#define READ_CODE 0x0002B30B
+#define WRITE_CODE 0x0062B02B
+spandex_config_t spandex_config;
+#endif
+#endif
+
+/* Size of the contiguous chunks for scatter/gather */
+#define CHUNK_SHIFT 20
+#define CHUNK_SIZE BIT(CHUNK_SHIFT)
+#define NCHUNK(_sz) ((_sz % CHUNK_SIZE == 0) ?		\
+			(_sz / CHUNK_SIZE) :		\
+			(_sz / CHUNK_SIZE) + 1)
+
+
+
 static unsigned DMA_WORD_PER_BEAT(unsigned _st)
 {
         return (sizeof(void *) / _st);
@@ -109,13 +172,6 @@ token_t *mem;
 token_t *gold;
 token_t *out;
 
-// #define PRINT_DEBUG
-// #define VALIDATE
-#define NUM_TILES 12
-#define TILE_SIZE 7
-#define SLD_TILED_APP 0x033
-#define DEV_NAME "sld,tiled_app_stratus"
-
 /* <<--params-->> */
 const int32_t num_tiles = NUM_TILES;//12;
 const int32_t tile_size = TILE_SIZE;
@@ -135,55 +191,7 @@ static unsigned	int write_tile;
 
 static unsigned coherence;
 
-/* Size of the contiguous chunks for scatter/gather */
-#define CHUNK_SHIFT 20
-#define CHUNK_SIZE BIT(CHUNK_SHIFT)
-#define NCHUNK(_sz) ((_sz % CHUNK_SIZE == 0) ?		\
-			(_sz / CHUNK_SIZE) :		\
-			(_sz / CHUNK_SIZE) + 1)
 
-/* Coherence Modes */
-#define COH_MODE 0
-#define ESP
-
-#ifdef ESP
-// ESP COHERENCE PROTOCOLS
-#define READ_CODE 0x0002B30B
-#define WRITE_CODE 0x0062B02B
-#if(COH_MODE == 3)
-#define COHERENCE_MODE ACC_COH_NONE
-#elif (COH_MODE == 2)
-#define COHERENCE_MODE ACC_COH_LLC
-#elif (COH_MODE == 1)
-#define COHERENCE_MODE ACC_COH_RECALL
-#else
-#define COHERENCE_MODE ACC_COH_FULL
-#endif
-#else
-//SPANDEX COHERENCE PROTOCOLS
-#define COHERENCE_MODE ACC_COH_FULL
-#if (COH_MODE == 3)
-// Owner Prediction
-#define READ_CODE 0x4002B30B
-#define WRITE_CODE 0x2262B82B
-spandex_config_t spandex_config = {.spandex_reg = 0, .r_en = 1, .r_type = 2, .w_en = 1, .w_op = 1, .w_type = 1};
-#elif (COH_MODE == 2)
-// Write-through forwarding
-#define READ_CODE 0x4002B30B
-#define WRITE_CODE 0x2062B02B
-spandex_config_t spandex_config = {.spandex_reg = 0, .r_en = 1, .r_type = 2, .w_en = 1, .w_type = 1};
-#elif (COH_MODE == 1)
-// Baseline Spandex
-#define READ_CODE 0x2002B30B
-#define WRITE_CODE 0x0062B02B
-spandex_config_t spandex_config = {.spandex_reg = 0, .r_en = 1, .r_type = 1};
-#else
-// Fully Coherent MESI
-#define READ_CODE 0x0002B30B
-#define WRITE_CODE 0x0062B02B
-spandex_config_t spandex_config;
-#endif
-#endif
 
 
 
@@ -192,7 +200,6 @@ spandex_config_t spandex_config;
 #define TILED_APP_NUM_TILES_REG 0x48
 #define TILED_APP_TILE_SIZE_REG 0x44
 #define TILED_APP_RD_WR_ENABLE_REG 0x40
-#define SYNC_BITS 1
 
 static inline uint32_t read_sync(){
 	#ifdef ESP
@@ -214,7 +221,9 @@ static inline uint32_t read_sync(){
 		: "r" (dst)
 		: "t0", "t1", "memory"
 	);
-	return (value_64 == 2);
+	int count = 0;
+	while(count < 10) count++;
+	return ((value_64 != 0)&&(value_64 != 1));
 }
 
 static inline void update_load_sync(){
@@ -245,7 +254,11 @@ static inline void update_load_sync(){
 
 static inline void load_mem(){
 	void *dst = (void*)(mem);
+	#ifdef VALIDATE
+	static int64_t val_64 = 1;//23;
+	#else
 	int64_t val_64 = 123;
+	#endif
 	for (int j = 0; j < tile_size; j++){
 		//int64_t value_64 = gold[(read_tile)*out_words_adj + j];
 		asm volatile (
@@ -258,6 +271,9 @@ static inline void load_mem(){
 		); //: "r" (dst), "r" (gold[(read_tile)*out_words_adj + j])
 
 		dst += 8;
+#ifdef VALIDATE
+		val_64++;
+#endif
 	}
 	asm volatile ("fence rw, rw");
 	read_tile += 1;
@@ -267,6 +283,9 @@ static inline void store_mem(){
 	void *src = (void*)(mem+tile_size);
 	// out [i] = mem[j];
 	int64_t out_val;
+#if defined(VALIDATE) || defined(MEM_DUMP)
+	int64_t curTile = write_tile*tile_size;
+#endif
 	for (int j = 0; j < tile_size; j++){
 		//int64_t value_64 = gold[(read_tile)*out_words_adj + j];
 		asm volatile (
@@ -278,6 +297,9 @@ static inline void store_mem(){
 			: "t0", "t1", "memory"
 		);//: "=r" (out[(write_tile) * out_words_adj + j])
 		src += 8;
+#if defined(VALIDATE) || defined(MEM_DUMP)
+		out[curTile++] = out_val; //mem[tile_size + j];
+#endif
 	}
 	asm volatile ("fence rw, rw");
 	write_tile++;
@@ -314,9 +336,10 @@ static void init_buf (token_t *in, token_t * gold, token_t* out)
 	}
 	// int seq = 0;
 	// printf("Gold: ");
+	int64_t val_64 = 1;
 	for (i = 0; i < num_tiles; i++){
 		for (j = 0; j < tile_size; j++){
-			gold[i * out_words_adj + j] = (token_t) 2*((i) * in_words_adj + j + 5); //2*(seq++);
+			gold[i * out_words_adj + j] = (token_t) val_64++;// 2*((i) * in_words_adj + j + 5); //2*(seq++);
 			out[i * out_words_adj + j] = 0;
 		}
 		
@@ -327,10 +350,11 @@ static void init_buf (token_t *in, token_t * gold, token_t* out)
 /* Print utilities
 */
 inline void console_log_header(){
-	int left = (tile_size%2)?tile_size/2+1 : tile_size/2;
-	int right = tile_size/2;
+	int loc_tilesize = tile_size%1024;
+	int left = (loc_tilesize%2)?loc_tilesize/2+1 : loc_tilesize/2;
+	int right = loc_tilesize/2;
 
-	printf("Tile Size : %d\t||", tile_size);
+	printf("Tile Size : %d|%d\t||", tile_size, loc_tilesize);
 	for (int __i = 0; __i<left; __i++)printf("\t");
 	printf("READ TILE");
 	for (int __i = 0; __i<right; __i++)printf("\t");
@@ -341,12 +365,16 @@ inline void console_log_header(){
 	printf("||SYNC VAR\n");
 }
 inline static void print_mem(int read ){
+	int loc_tilesize = tile_size%1024;
 	if(read == 1)
 	printf("Read  Tile: %d\t||", read_tile);
-	else
+	else if(read == 0)
 	printf("Store Tile: %d\t||", write_tile);
+	else
+	printf("Poll  Tile: %d\t||", write_tile);
 	int cntr = 0;
-	for(int __i = 0; __i < tile_size; __i++, cntr++){
+	int __i = (tile_size < 1024)? 0 : tile_size - loc_tilesize;
+	for(; __i < tile_size; __i++, cntr++){
 		printf("\t%d", mem[__i]);
 		if(cntr==15){
 			printf("\n");
@@ -354,7 +382,8 @@ inline static void print_mem(int read ){
 		}
 	}
 	printf("\t||");
-	for(int __i = 0, cntr = 0; __i < tile_size; __i++, cntr++){
+	__i = (tile_size < 1024)? 0 : tile_size - loc_tilesize;
+	for( cntr = 0; __i < tile_size; __i++, cntr++){
 		printf("\t%d", mem[tile_size+__i]);
 		if(cntr==15){
 			printf("\n");
@@ -519,13 +548,16 @@ int main(int argc, char * argv[])
 			print_mem(1);
 #endif
 			update_load_sync();
+#ifdef PRINT_DEBUG
+			print_mem(2);
+#endif
 			start_tiling = start_write;
 			intvl_read = 0;
 			while ( !done ) {
 				done = ioread32(dev, STATUS_REG);
 #ifdef PRINT_DEBUG
 				printf("done:%d\n", done);
-				print_mem(1);
+				print_mem(2);
 #endif
 				int32_t read_done = read_sync();
 				if(read_done==1){
@@ -546,6 +578,9 @@ int main(int argc, char * argv[])
 						print_mem(1);
 #endif
 						update_load_sync();
+#ifdef PRINT_DEBUG
+						print_mem(2);
+#endif
 						// stop_write = get_counter();
 						// intvl_write += stop_write - start_write;
 					}
@@ -570,6 +605,9 @@ int main(int argc, char * argv[])
 			iowrite32(dev, CMD_REG, 0x0);
 
 			printf("  Done\n");
+#ifdef MEM_DUMP
+for(int temp_i = 0; temp_i < num_tiles*tile_size; temp_i++) printf("%d\n", out[temp_i]);
+#endif
 #ifdef VALIDATE
 			printf("  validating...\n");
 

@@ -34,6 +34,7 @@ void tiled_app::load_input()
         HLS_PROTO("load-reset");
         load_iter_dbg.write(0);
         load_state_dbg.write(0);
+        load_unit_sp_write_dbg.write(0);
         input_ready.req.reset_req();
         output_ready.ack.reset_ack();
         this->reset_dma_read();
@@ -84,20 +85,23 @@ void tiled_app::load_input()
                     wait();
                     data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
                     wait();
-                    if(data == 1) load_state = LOAD_STATE_INIT_DMA;
+                    if(data == 1) load_state = LOAD_STATE_READ_DMA; //LOAD_STATE_INIT_DMA;
                     else load_state = LOAD_STATE_WAIT_FOR_INPUT_SYNC;
                 }
                 break;
         
-                case LOAD_STATE_INIT_DMA : {
+                // case LOAD_STATE_INIT_DMA : {
+                //     uint32_t len = length > PLM_IN_WORD ? PLM_IN_WORD : length;
+                //     dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len / DMA_WORD_PER_BEAT, DMA_SIZE);
+                //     this->dma_read_ctrl.put(dma_info);
+                //     load_state = LOAD_STATE_READ_DMA;
+                // }
+                // break;
+                case LOAD_STATE_READ_DMA: {
                     uint32_t len = length > PLM_IN_WORD ? PLM_IN_WORD : length;
                     dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len / DMA_WORD_PER_BEAT, DMA_SIZE);
                     this->dma_read_ctrl.put(dma_info);
-                    load_state = LOAD_STATE_READ_DMA;
-                }
-                break;
-                case LOAD_STATE_READ_DMA: {
-                    uint32_t len = length > PLM_IN_WORD ? PLM_IN_WORD : length;
+                    // uint32_t len = length > PLM_IN_WORD ? PLM_IN_WORD : length;
                     for (uint16_t i = 0; i < len; i += DMA_WORD_PER_BEAT)
                     {
                         HLS_UNROLL_LOOP(OFF);
@@ -108,10 +112,10 @@ void tiled_app::load_input()
                         dataBv = this->dma_read_chnl.get();
                         wait();
                         if (ping)
-                            plm_in_ping[sp_offset + i] =dataBv.range( DATA_WIDTH - 1, 0).to_int64();
+                            plm_in_ping[sp_offset + i] = dataBv.range( DATA_WIDTH - 1, 0).to_int64();
                         else
                             plm_in_pong[sp_offset + i] = dataBv.range( DATA_WIDTH - 1, 0).to_int64();
-        
+                        load_unit_sp_write_dbg.write(dataBv.range( DATA_WIDTH - 1, 0).to_int64()); 
                     }
                     load_state = LOAD_STATE_STORE_HANDSHAKE;
                 }
@@ -150,6 +154,7 @@ void tiled_app::store_output()
         HLS_PROTO("store-reset");
 	    store_iter_dbg.write(0);
         store_state_dbg.write(0);
+        store_unit_sp_read_dbg.write(0);
         input_ready.ack.reset_ack();
         output_ready.req.reset_req();
         wait();
@@ -186,9 +191,11 @@ void tiled_app::store_output()
         bool ping = true;
         uint32_t store_offset = round_up(tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT;
         uint32_t offset = store_offset;
+        // uint32_t sync_offset = round_up(2*tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT;
+
         uint32_t sp_offset = 0;
         int32_t curr_tile = 0;
-        uint32_t length = DMA_WORD_PER_BEAT;
+        uint32_t length = tile_size;
         uint32_t store_state = STORE_STATE_WAIT_FOR_HANDSHAKE;
 
         while(true){
@@ -199,21 +206,27 @@ void tiled_app::store_output()
                 case STORE_STATE_WAIT_FOR_HANDSHAKE:{
                     this->compute_load_handshake();
                     wait();
-                    store_state = STORE_STATE_DMA_INIT;
-                }
-                break;
-                case STORE_STATE_DMA_INIT: {
-                    uint32_t len = length + 1;//> PLM_OUT_WORD ? PLM_OUT_WORD : length;
-                    //len = len + 1; // appending sync bit
-                    dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len / DMA_WORD_PER_BEAT, DMA_SIZE);
-                    this->dma_write_ctrl.put(dma_info);
+                    // store_state = STORE_STATE_DMA_INIT;
                     store_state = STORE_STATE_DMA_SEND;
-                    // wait();
                 }
                 break;
+                // case STORE_STATE_DMA_INIT: {
+                //     uint32_t len = length;//> PLM_OUT_WORD ? PLM_OUT_WORD : length;
+                //     //len = len + 1; // appending sync bit
+                //     dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len / DMA_WORD_PER_BEAT, DMA_SIZE);
+                //     this->dma_write_ctrl.put(dma_info);
+                //     store_state = STORE_STATE_DMA_SEND;
+                //     // wait();
+                // }
+                // break;
 
                 case STORE_STATE_DMA_SEND: {
-                    uint32_t len = length > PLM_OUT_WORD ? PLM_OUT_WORD : length;
+                    uint32_t len = length;// > PLM_OUT_WORD ? PLM_OUT_WORD : length;
+                    uint32_t len_w_sync = len+SYNC_BITS; //
+                    uint8_t odd = ((len_w_sync)&1 == 1); 
+                    uint32_t len_final = odd ? len_w_sync + 1 : len_w_sync;
+                    dma_info_t dma_info(offset / DMA_WORD_PER_BEAT, len_final, DMA_SIZE);
+                    this->dma_write_ctrl.put(dma_info);
                     for (uint16_t i = 0; i < len; i += DMA_WORD_PER_BEAT)
                     {
 			            HLS_UNROLL_LOOP(OFF);
@@ -226,28 +239,39 @@ void tiled_app::store_output()
                                 dataBv.range(DATA_WIDTH - 1, 0) = plm_in_ping[sp_offset + i];
                             else
                                 dataBv.range(DATA_WIDTH - 1, 0) = plm_in_pong[sp_offset + i];
+                            store_unit_sp_read_dbg.write(plm_in_ping[sp_offset + i]);
                         // }
                         this->dma_write_chnl.put(dataBv);
                         wait();
                     }
-                    // sc_dt::sc_bv<DMA_WIDTH> dataBvSync;
-                    // dataBvSync.range(DATA_WIDTH - 1, 0) = 2;
-                    // this->dma_write_chnl.put(dataBvSync);
-                    // store_state = STORE_STATE_LOAD_HANDSHAKE;
-                    store_state = STORE_STATE_SYNC;
+                    sc_dt::sc_bv<DMA_WIDTH> dataBvSync;
+                    dataBvSync.range(DATA_WIDTH - 1, 0) = 2;
+                    this->dma_write_chnl.put(dataBvSync);
+                    wait();
+                    store_unit_sp_read_dbg.write(2);
+                    wait();
+                    if(odd){ // extra DMA write??
+                        sc_dt::sc_bv<DMA_WIDTH> dataBvSync2;
+                        dataBvSync2.range(DATA_WIDTH - 1, 0) = 666;
+                        this->dma_write_chnl.put(dataBvSync2);
+                        wait();
+                    }
+                            
+                    store_state = STORE_STATE_LOAD_HANDSHAKE;
+                    // store_state = STORE_STATE_SYNC;
                 } 
                 break;
 
-                case STORE_STATE_SYNC: {
-                    // dma_info_t dma_info(0, 1, DMA_SIZE);
-                    // this->dma_write_ctrl.put(dma_info);
-                    // wait();
-                    sc_dt::sc_bv<DMA_WIDTH> dataBv;
-                    dataBv.range(DATA_WIDTH - 1, 0) = 2;
-                    this->dma_write_chnl.put(dataBv);
-                    store_state = STORE_STATE_LOAD_HANDSHAKE;
+                // case STORE_STATE_SYNC: {
+                //     dma_info_t dma_info(sync_offset, 1, DMA_SIZE);
+                //     this->dma_write_ctrl.put(dma_info);
+                //     wait();
+                //     sc_dt::sc_bv<DMA_WIDTH> dataBv;
+                //     dataBv.range(DATA_WIDTH - 1, 0) = 2;
+                //     this->dma_write_chnl.put(dataBv);
+                //     store_state = STORE_STATE_LOAD_HANDSHAKE;
 
-                }
+                // }
                 // break;
 
                 case STORE_STATE_LOAD_HANDSHAKE:{

@@ -37,6 +37,8 @@ public:
         HLS_PRESERVE_SIGNAL(store_iter_dbg);
         HLS_PRESERVE_SIGNAL(load_state_dbg);
         HLS_PRESERVE_SIGNAL(store_state_dbg);
+        HLS_PRESERVE_SIGNAL(load_unit_sp_write_dbg);
+        HLS_PRESERVE_SIGNAL(store_unit_sp_read_dbg);
         // Map arrays to memories
         /* <<--plm-bind-->> */
         //HLS_MAP_plm(plm, PLM_OUT_NAME);
@@ -56,6 +58,8 @@ public:
     sc_signal< sc_int<64> > store_iter_dbg;
     sc_signal< sc_int<64> > load_state_dbg;
     sc_signal< sc_int<64> > store_state_dbg;
+    sc_signal< sc_int<64> > load_unit_sp_write_dbg;
+    sc_signal< sc_int<64> > store_unit_sp_read_dbg;
     // Load the input data
     void load_input();
 
