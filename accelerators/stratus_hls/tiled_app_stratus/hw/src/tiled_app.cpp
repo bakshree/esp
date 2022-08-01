@@ -246,7 +246,7 @@ void tiled_app::store_output()
                     wait();
                     // store_unit_sp_read_dbg.write(0);
                     // wait();
-                    // while (!(this->dma_write_chnl.ready)) wait();
+                    while (!(this->dma_write_chnl.ready)) wait();
                     // // Block till L2 to be ready to receive a fence, then send
                     // this->acc_fence.put(0x2);
                     // wait();
@@ -258,27 +258,34 @@ void tiled_app::store_output()
 
 
                 case STORE_STATE_LOAD_FENCE_DMA_CHL_RDY:{
-                    if(!(this->dma_write_chnl.ready)){ 
-                        wait();
-                        store_state = STORE_STATE_LOAD_FENCE_DMA_CHL_RDY; 
-                    }
-                    else {
-                        // Block till L2 to be ready to receive a fence, then send
-                        this->acc_fence.put(0x2);
-                        wait();
-                        store_state = STORE_STATE_LOAD_FENCE_RDY; 
-                    }
+                    // if(!(this->dma_write_chnl.ready)){ 
+                    //     wait();
+                    //     store_state = STORE_STATE_LOAD_FENCE_DMA_CHL_RDY; 
+                    // }
+                    // else {
+                    //     // Block till L2 to be ready to receive a fence, then send
+                    //     this->acc_fence.put(0x2);
+                    //     wait();
+                    //     store_state = STORE_STATE_LOAD_FENCE_RDY; 
+                    // }
+
+
+                    this->acc_fence.put(0x2);
+                    wait();
+                    while (!(this->acc_fence.ready)) wait();
+                    wait();
+                    store_state = STORE_STATE_DMA_SEND;
                 }
                 break;
 
-                case STORE_STATE_LOAD_FENCE_RDY:{
-                    if(!(this->acc_fence.ready)){ 
-                        wait();
-                        store_state = STORE_STATE_LOAD_FENCE_RDY; 
-                    }
-                    else store_state = STORE_STATE_DMA_SEND; 
-                }
-                break;
+                // case STORE_STATE_LOAD_FENCE_RDY:{
+                //     if(!(this->acc_fence.ready)){ 
+                //         wait();
+                //         store_state = STORE_STATE_LOAD_FENCE_RDY; 
+                //     }
+                //     else store_state = STORE_STATE_DMA_SEND; 
+                // }
+                // break;
 
                 case STORE_STATE_DMA_SEND: {
                     uint32_t len = length;// > PLM_OUT_WORD ? PLM_OUT_WORD : length;
@@ -324,31 +331,32 @@ void tiled_app::store_output()
                     wait();
                     store_unit_sp_read_dbg.write(1);
                     wait();
-                    
+                    while(!(this->dma_write_chnl.ready)) wait(); 
                     store_state = STORE_STATE_STORE_FENCE_DMA_CHL_RDY;
                 }
                 break;
 
                 case STORE_STATE_STORE_FENCE_DMA_CHL_RDY:{
-                    if(!(this->dma_write_chnl.ready)){ wait();
+                    // if(!(this->dma_write_chnl.ready)){ wait();
 
-                        store_state = STORE_STATE_STORE_FENCE_DMA_CHL_RDY; }
-                    else {
+                    //     store_state = STORE_STATE_STORE_FENCE_DMA_CHL_RDY; }
+                    // else {
                         // Block till L2 to be ready to receive a fence, then send
                         this->acc_fence.put(0x2);
                         wait();
-                        store_state = STORE_STATE_STORE_FENCE_RDY; 
-                    }
+                        while(!(this->acc_fence.ready)) wait(); 
+                        store_state = STORE_STATE_LOAD_HANDSHAKE;
+                    // }
                 }
                 break;
 
-                case STORE_STATE_STORE_FENCE_RDY:{
-                    if(!(this->acc_fence.ready)){ 
-                        wait();
-                        store_state = STORE_STATE_STORE_FENCE_RDY; }
-                    else store_state = STORE_STATE_LOAD_HANDSHAKE; 
-                }
-                break;
+                // case STORE_STATE_STORE_FENCE_RDY:{
+                //     if(!(this->acc_fence.ready)){ 
+                //         wait();
+                //         store_state = STORE_STATE_STORE_FENCE_RDY; }
+                //     else store_state = STORE_STATE_LOAD_HANDSHAKE; 
+                // }
+                // break;
 
                 case STORE_STATE_LOAD_HANDSHAKE:{
                     this->compute_store_handshake();
