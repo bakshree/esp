@@ -19,32 +19,32 @@ typedef union
 {
   struct
   {
-    unsigned int r_en   : 1;
-    unsigned int r_op   : 1;
-    unsigned int r_type : 2;
-    unsigned int r_cid  : 4;
-    unsigned int w_en   : 1;
-    unsigned int w_op   : 1;
-    unsigned int w_type : 2;
-    unsigned int w_cid  : 4;
-	unsigned int reserved: 16;
+    unsigned int r_en    : 1;
+    unsigned int r_op    : 1;
+    unsigned int r_type  : 2;
+    unsigned int r_cid   : 4;
+    unsigned int w_en    : 1;
+    unsigned int w_op    : 1;
+    unsigned int w_type  : 2;
+    unsigned int w_cid   : 4;
+    unsigned int reserved: 16;
   };
   uint32_t spandex_reg;
 } spandex_config_t;
 
 
 #define NUM_DEVICES 3
-//#define PRINT_DEBUG
+#define PRINT_DEBUG
 //#define VALIDATE
 // #define MEM_DUMP 1
-#define NUM_TILES 32
-#define TILE_SIZE 64
+#define NUM_TILES 16
+#define TILE_SIZE 16
 #define SLD_TILED_APP 0x033
 #define DEV_NAME "sld,tiled_app_stratus"
 #define SYNC_BITS 1
 
 /* Coherence Modes */
-#define COH_MODE 0
+#define COH_MODE 3
 // #define ESP
 
 #ifdef ESP
@@ -213,6 +213,9 @@ static inline uint32_t read_sync(){
 	#endif
 	void* dst = (void*)(mem);
 	int64_t value_64 = 0;
+	#if !defined(ESP)
+	value_64 = mem[num_dev];
+	#else
 	asm volatile (
 		"mv t0, %1;"
 		".word " QU(READ_CODE) ";"
@@ -221,6 +224,7 @@ static inline uint32_t read_sync(){
 		: "r" (dst)
 		: "t0", "t1", "memory"
 	);
+	#endif
 	return (value_64 == 0);
 }
 
@@ -236,6 +240,9 @@ static inline uint32_t write_sync(){
 	#endif
 	void* dst = (void*)(mem+num_dev);
 	int64_t value_64 = 0;
+	#if !defined(ESP)
+	value_64 = mem[num_dev];
+	#else
 	asm volatile (
 		"mv t0, %1;"
 		".word " QU(READ_CODE) ";"
@@ -244,13 +251,18 @@ static inline uint32_t write_sync(){
 		: "r" (dst)
 		: "t0", "t1", "memory"
 	);
+	#endif
 	return (value_64 == 1);
 }
 
 static inline void update_load_sync(){
+	#ifdef PRINT_DEBUG
+	printf("Inside update load 1\n");
+	#endif
 	void* dst = (void*)(mem);
 	int64_t value_64 = 1;
-	#if (COH_MODE == 0) && !defined(ESP)
+	#if !defined(ESP)
+//(COH_MODE == 0) && 
 	mem[0] = value_64;
 	#else
 	asm volatile (
@@ -263,8 +275,11 @@ static inline void update_load_sync(){
 	);
 	#endif
 
+	#ifdef PRINT_DEBUG
+	printf("Inside update load 2\n");
+	#endif
 	//Fence to push the write out from the write buffer
-	asm volatile ("fence rw, rw");	
+	asm volatile ("fence w, w");	
 	stop_write = get_counter();
 	intvl_write += stop_write - start_write;
 	start_sync = stop_write ; //get_counter();
@@ -278,12 +293,16 @@ static inline void update_load_sync(){
 		start_sync = stop_flush;
 	#endif
 	#endif
+	#ifdef PRINT_DEBUG
+	printf("Inside update load 3\n");
+	#endif
 }
 
 static inline void update_store_sync(){
 	void* dst = (void*)(mem+num_dev);
 	int64_t value_64 = 0; //Finished reading store_tile
-	#if (COH_MODE == 0) && !defined(ESP)
+	#if !defined(ESP)
+//(COH_MODE == 0) && 
 	mem[0+num_dev] = value_64;
 	#else
 	asm volatile (
@@ -297,18 +316,18 @@ static inline void update_store_sync(){
 	#endif
 
 	//Fence to push the write out from the write buffer
-	asm volatile ("fence rw, rw");	
+	asm volatile ("fence w, w");	
 	stop_write = get_counter();
 	intvl_write += stop_write - start_write;
 	start_sync = stop_write ; //get_counter();
 	#ifdef ESP
 	#if (COH_MODE==3 || COH_MODE==2 )
-		// Flush because Non Coherent DMA/ LLC Coherent DMA
-		start_flush = get_counter();
-		esp_flush(coherence);
-		stop_flush = get_counter();
-		intvl_flush += (stop_flush - start_flush);
-		start_sync = stop_flush;
+	      // Flush because Non Coherent DMA/ LLC Coherent DMA
+	      start_flush = get_counter();
+	      esp_flush(coherence);
+	      stop_flush = get_counter();
+	      intvl_flush += (stop_flush - start_flush);
+	      start_sync = stop_flush;
 	#endif
 	#endif
 }
@@ -523,7 +542,7 @@ printf("ACC_COH_NONE\n");
 #endif
 #else
 //SPANDEX COHERENCE PROTOCOLS
-printf("Spandex Coherence: (%d) : ", spandex_config.spandex_reg);
+printf("Spandex Coherence: (%x) : ", spandex_config.spandex_reg);
 #if (COH_MODE == 3)
 // Owner Prediction
 printf("Owner Prediction\n");
@@ -660,6 +679,7 @@ int main(int argc, char * argv[])
 
 		// If Spandex Caches
 #ifndef ESP
+			spandex_config.w_cid = (n+1);
 			iowrite32(dev, SPANDEX_REG, spandex_config.spandex_reg);
 #endif
 	
@@ -671,7 +691,7 @@ int main(int argc, char * argv[])
 		printf("  --------------------\n");
 		printf("  Generate input...\n");
 		init_buf(mem, gold, out, mem_size/sizeof(token_t));
-print_mem(2);
+		//print_mem(2);
 		//bmmishra3
 		asm volatile ("fence rw, rw");
 		}
@@ -791,6 +811,7 @@ if(done) break;
 #ifdef PRINT_DEBUG
 					printf("Done:Update load sync()\n");
 					print_mem(2);
+					printf("Done:Printmen\n");
 #endif
 					// stop_write = get_counter();
 					// intvl_write += stop_write - start_write;
