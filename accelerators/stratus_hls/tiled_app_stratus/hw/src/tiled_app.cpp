@@ -49,6 +49,9 @@ void tiled_app::load_input()
 
     // Config
     /* <<--params-->> */
+    int32_t input_tile_start_offset;
+    int32_t output_spin_sync_offset  ;
+    int32_t input_spin_sync_offset   ;
     int32_t num_tiles;
     int32_t tile_size;
     int32_t tile_no;
@@ -61,9 +64,12 @@ void tiled_app::load_input()
 
         // User-defined config code
         /* <<--local-params-->> */
+        output_spin_sync_offset = config.output_spin_sync_offset  ;
+        input_spin_sync_offset  = config.input_spin_sync_offset   ;
         num_tiles = config.num_tiles;
         tile_size = config.tile_size;
         tile_no = config.rd_wr_enable;
+        input_tile_start_offset = config.input_tile_start_offset;
     }
    
     // Load
@@ -73,9 +79,9 @@ void tiled_app::load_input()
 	    int64_t load_state = LOAD_STATE_WAIT_FOR_INPUT_SYNC;
         bool ping = true;
         int32_t curr_tile = 0;
-        uint32_t offset = 64 + tile_no*tile_size; //SYNC_BITS; //0;
+        uint32_t offset = input_tile_start_offset; //64 + tile_no*tile_size; //SYNC_BITS; //0;
         uint32_t sp_offset = 0;
-        uint32_t sync_offset = tile_no; //2*tile_size;
+        // uint32_t sync_offset = tile_no; //2*tile_size;
         uint32_t length = tile_size; // round_up(tile_size, DMA_WORD_PER_BEAT);
         // uint32_t read = 0;
         while(true){
@@ -86,7 +92,7 @@ void tiled_app::load_input()
                 case LOAD_STATE_WAIT_FOR_INPUT_SYNC: {
                     int64_t data = 0;
                     sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-                    dma_info_t dma_info2(sync_offset, 1, DMA_SIZE);
+                    dma_info_t dma_info2(input_spin_sync_offset, 1, DMA_SIZE);
                     this->dma_read_ctrl.put(dma_info2);
                     wait();
                     dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
@@ -131,7 +137,7 @@ void tiled_app::load_input()
                 case LOAD_STATE_STORE_SYNC: {
                     int64_t data = 0;
                     sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-                    dma_info_t dma_info2(sync_offset+1, 1, DMA_SIZE);
+                    dma_info_t dma_info2(output_spin_sync_offset, 1, DMA_SIZE); //sync_offset+1
                     this->dma_read_ctrl.put(dma_info2);
                     wait();
                     dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
@@ -197,6 +203,9 @@ void tiled_app::store_output()
 
     // Config
     /* <<--params-->> */
+    int32_t output_tile_start_offset;
+    int32_t output_update_sync_offset;
+    int32_t input_update_sync_offset ;
     int32_t num_tiles;
     int32_t tile_size;
     int32_t tile_no;
@@ -209,6 +218,9 @@ void tiled_app::store_output()
 
         // User-defined config code
         /* <<--local-params-->> */
+        output_tile_start_offset = config.output_tile_start_offset;
+        output_update_sync_offset = config.output_update_sync_offset;
+        input_update_sync_offset  = config.input_update_sync_offset ;
         num_tiles = config.num_tiles;
         tile_size = config.tile_size;
         tile_no = config.rd_wr_enable;
@@ -220,7 +232,7 @@ void tiled_app::store_output()
         // wait();
 
         bool ping = true;
-        uint32_t read_offset =  64 + tile_no*tile_size; //SYNC_BITS; //0;
+        uint32_t read_offset =  output_tile_start_offset; //64 + tile_no*tile_size; //SYNC_BITS; //0;
         uint32_t store_offset = round_up(read_offset + tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT;
         uint32_t offset = store_offset;
         // uint32_t sync_offset = round_up(2*tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT;
@@ -249,7 +261,7 @@ void tiled_app::store_output()
                 case STORE_STATE_LOAD_SYNC: {
                     sc_dt::sc_bv<DMA_WIDTH> dataBvSync;
                     dataBvSync.range(DATA_WIDTH - 1, 0) = 0;
-                    dma_info_t dma_info_sync(tile_no, 1, DMA_SIZE);// sync location
+                    dma_info_t dma_info_sync(input_update_sync_offset, 1, DMA_SIZE);//tile_no sync location
                     this->dma_write_ctrl.put(dma_info_sync);
                     wait();
                     this->dma_write_chnl.put(dataBvSync);
@@ -324,7 +336,7 @@ void tiled_app::store_output()
                 
                     sc_dt::sc_bv<DMA_WIDTH> dataBvSync;
                     dataBvSync.range(DATA_WIDTH - 1, 0) = 1;
-                    dma_info_t dma_info_sync(tile_no+1, 1, DMA_SIZE);//next sync location
+                    dma_info_t dma_info_sync(output_update_sync_offset, 1, DMA_SIZE);//tile_no+1 next sync location
                     wait();
                     this->dma_write_ctrl.put(dma_info_sync);
                     wait();
