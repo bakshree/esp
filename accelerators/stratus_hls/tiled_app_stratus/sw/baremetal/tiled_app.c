@@ -33,18 +33,18 @@ typedef union
 } spandex_config_t;
 
 
-#define NUM_DEVICES 1
-#define PRINT_DEBUG
-#define VALIDATE
+#define NUM_DEVICES 3
+//#define PRINT_DEBUG
+//#define VALIDATE
 // #define MEM_DUMP 1
-#define NUM_TILES 12
-#define TILE_SIZE 16
+#define NUM_TILES 32
+#define TILE_SIZE 64
 #define SLD_TILED_APP 0x033
 #define DEV_NAME "sld,tiled_app_stratus"
 #define SYNC_BITS 1
 
 /* Coherence Modes */
-#define COH_MODE 0
+#define COH_MODE 3
 #define ESP
 
 #ifdef ESP
@@ -179,6 +179,8 @@ const int32_t num_tiles = NUM_TILES;//12;
 const int32_t tile_size = TILE_SIZE;
 const int32_t rd_wr_enable = 0;
 
+int32_t num_dev = NUM_DEVICES;
+
 static unsigned in_words_adj;
 static unsigned out_words_adj;
 static unsigned in_len;
@@ -232,7 +234,7 @@ static inline uint32_t write_sync(){
 		spin_flush += stop_flush-start_flush;
 	#endif
 	#endif
-	void* dst = (void*)(mem+NUM_DEVICES);
+	void* dst = (void*)(mem+num_dev);
 	int64_t value_64 = 0;
 	asm volatile (
 		"mv t0, %1;"
@@ -249,7 +251,7 @@ static inline void update_load_sync(){
 	void* dst = (void*)(mem);
 	int64_t value_64 = 1;
 	#if (COH_MODE == 0) && !defined(ESP)
-	mem[tile_size*2] = value_64;
+	mem[0] = value_64;
 	#else
 	asm volatile (
 		"mv t0, %0;"
@@ -279,10 +281,10 @@ static inline void update_load_sync(){
 }
 
 static inline void update_store_sync(){
-	void* dst = (void*)(mem+NUM_DEVICES);
+	void* dst = (void*)(mem+num_dev);
 	int64_t value_64 = 0; //Finished reading store_tile
 	#if (COH_MODE == 0) && !defined(ESP)
-	mem[tile_size*2] = value_64;
+	mem[0+num_dev] = value_64;
 	#else
 	asm volatile (
 		"mv t0, %0;"
@@ -316,7 +318,8 @@ static inline void load_mem(){
 	#ifdef VALIDATE
 	static int64_t val_64 = 1;//23;
 	#else
-	int64_t val_64 = 123;
+	static int64_t temp = 1;
+	int64_t val_64 = (read_tile < num_tiles)?(temp++):0;
 	#endif
 	for (int j = 0; j < tile_size; j++){
 		//int64_t value_64 = gold[(read_tile)*out_words_adj + j];
@@ -343,7 +346,7 @@ static inline void load_mem(){
 }
 
 static inline void store_mem(){
-	void *src = (void*)(mem+64+tile_size);
+	void *src = (void*)(mem+64+num_dev*tile_size);
 	// out [i] = mem[j];
 	int64_t out_val;
 #if defined(VALIDATE) || defined(MEM_DUMP)
@@ -376,39 +379,58 @@ static int validate_buf(token_t *out, token_t *gold)
 	int loc = 0;
 	for (i = 0; i < num_tiles; i++)
 		for (j = 0; j < tile_size; j++){
-			if (gold[i * out_words_adj + j] != out[i * out_words_adj + j]){
+			loc++;
+			if (loc != out[i * out_words_adj + j]){
 #ifdef PRINT_DEBUG
-				printf("tile: %d loc:%d gold: %d -- found: %d \n",i, loc, gold[i * out_words_adj + j], out[i * out_words_adj + j]);
+				printf("tile: %d loc:%d -- found: %d \n",i, loc, out[i * out_words_adj + j]);
 #endif
 				errors++;
 			}
-			loc++;
 		}
 
 	return errors;
 }
 
 
-static void init_buf (token_t *in, token_t * gold, token_t* out)
+static void init_buf (token_t *in, token_t * gold, token_t* out, int buf_size)
 {
 	int i;
 	int j;
 	int offset = 2*tile_size;
 	// in[offset] = 0;
-	// in[1] = 0;
-	for (j = 0; j < 2*tile_size+1; j++){
+	// in[1] = 0;i
+	int64_t val_64 = 0;
+	void * dst = (void*)(in);
+	for (j = 0; j < 64 + (NUM_DEVICES+1)*tile_size; j++){
+//		in[j] = 0;
+//int64_t value_64 = gold[(read_tile)*out_words_adj + j];
+		#if (COH_MODE == 0) && !defined(ESP)
+//			mem[64+j] = val_64;
 		in[j] = 0;
+		#else
+		asm volatile (
+			"mv t0, %0;"
+			"mv t1, %1;"
+			".word " QU(WRITE_CODE)
+			: 
+			: "r" (dst), "r" (val_64)
+			: "t0", "t1", "memory"
+		); //: "r" (dst), "r" (gold[(read_tile)*out_words_adj + j])
+
+		dst += 8;
+		#endif
+
 	}
 	// int seq = 0;
 	// printf("Gold: ");
-	int64_t val_64 = 1;
-	for (i = 0; i < num_tiles; i++){
-		for (j = 0; j < tile_size; j++){
-			gold[i * out_words_adj + j] = (token_t) val_64++;// 2*((i) * in_words_adj + j + 5); //2*(seq++);
-			out[i * out_words_adj + j] = 0;
-		}
-		
-	}
+	//val_64 = 1;
+	//for (i = 0; i < num_tiles; i++){
+	//	for (j = 0; j < tile_size; j++){
+	//		gold[i * out_words_adj + j] = (token_t) val_64++;// 2*((i) * in_words_adj + j + 5); //2*(seq++);
+	//		out[i * out_words_adj + j] = 0;
+	//	}
+	//	
+	//}
 }
 
 
@@ -429,6 +451,7 @@ inline void console_log_header(){
 	for (int __i = 0; __i<right; __i++)printf("\t");
 	printf("||SYNC VAR\n");
 }
+
 inline static void print_mem(int read ){
 	int loc_tilesize = tile_size%1024;
 	if(read == 1)
@@ -436,26 +459,53 @@ inline static void print_mem(int read ){
 	else if(read == 0)
 	printf("Store Tile: %d\t||", write_tile);
 	else
-	printf("Poll  Tile: %d\t||", write_tile);
+	printf("Polled Tile (%d): %d\t||", ( 64 + (NUM_DEVICES+1)*tile_size), write_tile);
+
 	int cntr = 0;
-	int __i = (tile_size < 1024)? 0 : tile_size - loc_tilesize;
-	for(; __i < tile_size; __i++, cntr++){
-		printf("\t%d", mem[64+__i]);
+	void* dst = (void*)(mem);
+for (int j = 0; j < 64 + (NUM_DEVICES+1)*tile_size; j++){
+	int64_t value_64 = 0;
+	asm volatile (
+		"mv t0, %1;"
+		".word " QU(READ_CODE) ";"
+		"mv %0, t1"
+		: "=r" (value_64)
+		: "r" (dst)
+		: "t0", "t1", "memory"
+	);
+printf("\t%d",value_64);
 		if(cntr==15){
 			printf("\n");
 			cntr = -1;
 		}
-	}
-	printf("\t||");
-	__i = (tile_size < 1024)? 0 : tile_size - loc_tilesize;
-	for( cntr = 0; __i < tile_size; __i++, cntr++){
-		printf("\t%d", mem[64+tile_size+__i]);
-		if(cntr==15){
-			printf("\n");
-			cntr = -1;
-		}
-	}
-	printf("\t||\t%d--%d\n", mem[0], mem[1]);
+		if( j>64 && ((j-64)%tile_size == 0)) printf("\n ==================================\n");
+dst += 8; 
+cntr++;
+}
+
+	//int cntr = 0;
+	//int __i = (tile_size < 1024)? 0 : tile_size - loc_tilesize;
+	//for(; __i < tile_size; __i++, cntr++){
+	//	printf("\t%d", mem[64+__i]);
+	//	if(cntr==15){
+	//		printf("\n");
+	//		cntr = -1;
+	//	}
+	//}
+	//printf("\t||");
+	//for(int nd = 0; nd < NUM_DEVICES; nd++){
+	//__i = (tile_size < 1024)? 0 : tile_size - loc_tilesize;
+	//for( cntr = 0; __i < tile_size; __i++, cntr++){
+	//	printf("\t%d", mem[64+ (nd+1)*tile_size+__i]);
+	//	if(cntr==15){
+	//		printf("\n");
+	//		cntr = -1;
+	//	}
+	//}
+	//printf("\t||\t");
+	//}
+	//for(int __sync = 0; __sync <= num_dev; __sync++) printf("%d ", mem[__sync]);
+	printf("\n");
 }
 
 inline static void print_coherence_mode(){
@@ -467,9 +517,9 @@ printf("ACC_COH_NONE\n");
 #elif (COH_MODE == 2)
 printf("ACC_COH_LLC\n");
 #elif (COH_MODE == 1)
-printf("ACC_COH_FULL\n");
+printf("ACC_COH_RECALL\n");
 #else
-printf("ACC_COH_NONE\n");
+printf("ACC_COH_FULL\n");
 #endif
 #else
 //SPANDEX COHERENCE PROTOCOLS
@@ -504,6 +554,7 @@ int main(int argc, char * argv[])
 	struct esp_device *dev;
 	unsigned done;
 	unsigned **ptable;
+	unsigned ***ptable_list;
 	unsigned errors = 0;
 	// printf("Checkpoint 1\n");
 
@@ -516,18 +567,6 @@ int main(int argc, char * argv[])
 	}
 	// printf("Checkpoint 2\n");
 
-	in_len = in_words_adj+64;
-	out_len = out_words_adj;
-	in_size = in_len * sizeof(token_t);
-	out_size = out_len * sizeof(token_t)*NUM_DEVICES;
-	out_offset  = in_len;
-	mem_size = (out_offset * sizeof(token_t)) + out_size;
-
-	// printf("Checkpoint 3\n");
-
-
-	printf("num_tiles      =  %u\n",num_tiles     	); //num_tiles);
-	printf("tile_size      =  %u\n",tile_size	    ); //num_tiles);
 
 	// Search for the device
 	printf("Scanning device tree... uwu \n");
@@ -537,20 +576,54 @@ int main(int argc, char * argv[])
 		printf("tiled_app not found\n");
 		return 0;
 	}
+	//if(ndev>1)ndev = NUM_DEVICES; //TODO:DELETE
+	ndev = (NUM_DEVICES<ndev)? NUM_DEVICES : ndev;
+	num_dev = ndev;
 
 	#ifdef PRINT_DEBUG
 	printf("Devices found:%d\n", ndev);
 	#endif
+
+	in_len = in_words_adj+64;
+	out_len = out_words_adj;
+	in_size = in_len * sizeof(token_t);
+	out_size = out_len * sizeof(token_t)*num_dev;
+	out_offset  = in_len;
+	mem_size = (out_offset * sizeof(token_t)) + out_size;
+
+	// printf("Checkpoint 3\n");
+
+
+	printf("num_tiles      =  %u\n",num_tiles     	); //num_tiles);
+	printf("tile_size      =  %u\n",tile_size	    ); //num_tiles);
 	// Allocate memory
-	gold = aligned_malloc(out_size*num_tiles+10);
-	out = aligned_malloc(out_size*num_tiles+10);
+	//gold = aligned_malloc(out_size*num_tiles+10);
+	//out = aligned_malloc(out_size*num_tiles+10);
 	mem = aligned_malloc(mem_size+10);
-	if(ndev>1)ndev = 1; //TODO:DELETE
-	if(ndev>1){
-		mem_list = aligned_malloc((ndev-1)*sizeof(token_t*)); 
-		for(int __i = 0; __i<ndev-1; __i++)
-			mem_list[__i] = aligned_malloc(mem_size+10);	
-	}
+	read_tile = 0;
+		write_tile = 0;
+		// Wait for completion
+		done = 0;
+		int done_prev = 0;
+		int temp_rd_wr_enable = 0;
+		int store_done_prev = 0;
+		int load_turn = 1;
+#ifdef PRINT_DEBUG
+		// console_log_header();
+#endif
+		//load_mem(mem, gold, &read_tile); 
+		intvl_flush = 0;
+		intvl_sync = 0;
+		spin_flush = 0;
+		intvl_write = 0;
+
+
+
+	//if(ndev>1){
+	//	mem_list = aligned_malloc((ndev-1)*sizeof(token_t*)); 
+	//	for(int __i = 0; __i<ndev-1; __i++)
+	//		mem_list[__i] = aligned_malloc(mem_size+10);	
+	//}
 	for (n = 0; n < ndev; n++) {
 
 		printf("**************** %s.%d ****************\n", DEV_NAME, n);
@@ -570,14 +643,15 @@ int main(int argc, char * argv[])
 
 
 		print_coherence_mode();
-		printf("  gold buffer base-address = %p\n", gold);
-		printf("  out buffer base-address = %p\n", out);
+		//printf("  gold buffer base-address = %p\n", gold);
+		//printf("  out buffer base-address = %p\n", out);
 		printf("  memory buffer base-address = %p\n", mem);
 
 		// Alocate and populate page table
 		ptable = aligned_malloc(NCHUNK(mem_size) * sizeof(unsigned *));
 		for (i = 0; i < NCHUNK(mem_size); i++)
 			ptable[i] = (unsigned *) &mem[i * (CHUNK_SIZE / sizeof(token_t))];
+		ptable_list[n] = ptable;
 
 		printf("  ptable = %p\n", ptable);
 		printf("  nchunk = %lu\n", NCHUNK(mem_size));
@@ -588,162 +662,183 @@ int main(int argc, char * argv[])
 #ifndef ESP
 			iowrite32(dev, SPANDEX_REG, spandex_config.spandex_reg);
 #endif
-		//#ifndef __riscv
-		// 		for (coherence = ACC_COH_NONE; coherence <= ACC_COH_FULL; coherence++) {
-		// #else
-		{
-			/* TODO: Restore full test once ESP caches are integrated */
-			coherence = COHERENCE_MODE ; //ACC_COH_RECALL; //ACC_COH_FULL
-		// #endif
-			printf("  --------------------\n");
-			printf("  Generate input...\n");
-			init_buf(mem, gold, out);
-			//bmmishra3
-        	asm volatile ("fence rw, rw");
-			// Pass common configuration parameters
+	
+	
+		/* TODO: Restore full test once ESP caches are integrated */
+		coherence = COHERENCE_MODE ; //ACC_COH_RECALL; //ACC_COH_FULL
+	// #endif
+		if(n == 0){
+		printf("  --------------------\n");
+		printf("  Generate input...\n");
+		init_buf(mem, gold, out, mem_size/sizeof(token_t));
+print_mem(2);
+		//bmmishra3
+		asm volatile ("fence rw, rw");
+		}
+		// Pass common configuration parameters
 
-			iowrite32(dev, SELECT_REG, ioread32(dev, DEVID_REG));
-			iowrite32(dev, COHERENCE_REG, coherence);
+		iowrite32(dev, SELECT_REG, ioread32(dev, DEVID_REG));
+		iowrite32(dev, COHERENCE_REG, coherence);
 
 #ifndef __sparc
-			iowrite32(dev, PT_ADDRESS_REG, (unsigned long long) ptable);
+		iowrite32(dev, PT_ADDRESS_REG, (unsigned long long) ptable);
 #else
-			iowrite32(dev, PT_ADDRESS_REG, (unsigned) ptable);
+		iowrite32(dev, PT_ADDRESS_REG, (unsigned) ptable);
 #endif
-			iowrite32(dev, PT_NCHUNK_REG, NCHUNK(mem_size));
-			iowrite32(dev, PT_SHIFT_REG, CHUNK_SHIFT);
+		iowrite32(dev, PT_NCHUNK_REG, NCHUNK(mem_size));
+		iowrite32(dev, PT_SHIFT_REG, CHUNK_SHIFT);
 
-			// Use the following if input and output data are not allocated at the default offsets
-			iowrite32(dev, SRC_OFFSET_REG, 0x0);
-			iowrite32(dev, DST_OFFSET_REG, 0x0);
+		// Use the following if input and output data are not allocated at the default offsets
+		iowrite32(dev, SRC_OFFSET_REG, 0x0);
+		iowrite32(dev, DST_OFFSET_REG, 0x0);
 
-			// Pass accelerator-specific configuration parameters
-			/* <<--regs-config-->> */
-			iowrite32(dev, TILED_APP_NUM_TILES_REG, num_tiles);
-			iowrite32(dev, TILED_APP_TILE_SIZE_REG, tile_size);
-			iowrite32(dev, TILED_APP_RD_WR_ENABLE_REG, n);//device number
+		// Pass accelerator-specific configuration parameters
+		/* <<--regs-config-->> */
+		iowrite32(dev, TILED_APP_NUM_TILES_REG, num_tiles+ndev-n-1);//ndev-n-
+		iowrite32(dev, TILED_APP_TILE_SIZE_REG, tile_size);
+		iowrite32(dev, TILED_APP_RD_WR_ENABLE_REG, n);//device number
 
-			// Flush (customize coherence model here)
-			esp_flush(coherence);
+		// Flush (customize coherence model here)
+		esp_flush(coherence);
 
-			// Start accelerators
-			printf("  Start...\n");
-			iowrite32(dev, CMD_REG, CMD_MASK_START);
-			read_tile = 0;
-			write_tile = 0;
-			// Wait for completion
-			done = 0;
-			int done_prev = 0;
-			int temp_rd_wr_enable = 0;
-			int store_done_prev = 0;
-        	int load_turn = 1;
+		// Start accelerators
+		printf("  Start...\n");
+		iowrite32(dev, CMD_REG, CMD_MASK_START);
+
+	}
+	dev = &espdevs[ndev-1];
+		void* dst = (void*)(mem);
+		// Load 1st Tile
+//		load_mem();
+//#ifdef PRINT_DEBUG
+//		print_mem(1);
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//printf(".\n");
+//#endif
+//		update_load_sync();
+//#ifdef PRINT_DEBUG
+//		print_mem(2);
+//#endif
+		//start_tiling = start_write;
+		start_tiling = get_counter();
+		intvl_read = 0;
+		while ( !done ) {
+			//printf("readtile: %d writetile: %d\n", read_tile, write_tile);
 #ifdef PRINT_DEBUG
-			console_log_header();
-#endif
-			//load_mem(mem, gold, &read_tile); 
-			intvl_flush = 0;
-			intvl_sync = 0;
-			spin_flush = 0;
-			intvl_write = 0;
-			void* dst = (void*)(mem);
-			start_write = get_counter();
-			// Load 1st Tile
-			load_mem();
-#ifdef PRINT_DEBUG
-			print_mem(1);
-#endif
-			update_load_sync();
-#ifdef PRINT_DEBUG
-			print_mem(2);
-#endif
-			start_tiling = start_write;
-			intvl_read = 0;
-			while ( !done ) {
+			printf("Done:");
+			for(int nd = 0; nd<ndev; nd++){
+				dev = &espdevs[ndev-1];
 				done = ioread32(dev, STATUS_REG);
-#ifdef PRINT_DEBUG
-				printf("Done:%d\n", done);
-				print_mem(2);
-#endif
-
-				int32_t store_done = write_sync();
-				if(store_done){
-					stop_sync = get_counter();
-					intvl_sync += stop_sync- start_sync - spin_flush;
-					spin_flush = 0;
-					start_read = get_counter();
-					store_mem();
-					update_store_sync();
-					stop_read = get_counter();
-					intvl_read += stop_read - start_read;
-					#ifdef PRINT_DEBUG
-					print_mem(0);
-					#endif
-				}
-				int32_t read_done = read_sync();
-				if(read_done==1){
-					if(read_tile<num_tiles){
-						start_write = get_counter();
-						load_mem();
-#ifdef PRINT_DEBUG
-						print_mem(1);
-#endif
-						update_load_sync();
-#ifdef PRINT_DEBUG
-						print_mem(2);
-#endif
-						// stop_write = get_counter();
-						// intvl_write += stop_write - start_write;
-					}
-					// intvl_read += stop_read - start_read;
-				}
-				
-				done &= STATUS_MASK_DONE;
+				printf("%d ", (done&STATUS_MASK_DONE == STATUS_MASK_DONE));
 			}
-			//Fetch last tile
-// 			if(write_tile < num_tiles) {
-// 					start_read = get_counter();
-// 					store_mem();
-// 					stop_read = get_counter();
-// 					intvl_read += stop_read - start_read;
-// #ifdef PRINT_DEBUG
-// 					print_mem(0);
-// #endif
-// 			}
-			stop_tiling = get_counter();;
-			intvl_tiling = stop_tiling - start_tiling;
-			//What is this doing?
-			iowrite32(dev, CMD_REG, 0x0);
+			printf("\n");
+			print_mem(2);
+#else
+done = ioread32(dev, STATUS_REG);
+#endif
+			done &= STATUS_MASK_DONE;
+			//esp_flush(coherence);
 
-			printf("  Done\n");
+			int32_t store_done = write_sync();
+			if(store_done==1 ){
+			//	if(write_tile < NUM_TILES){
+				stop_sync = get_counter();
+				intvl_sync += stop_sync- start_sync - spin_flush;
+				spin_flush = 0;
+				start_read = get_counter();
+				store_mem();
+				update_store_sync();
+				stop_read = get_counter();
+				intvl_read += stop_read - start_read;
+				#ifdef PRINT_DEBUG
+				print_mem(0);
+				#endif
+				//} else {update_store_sync();
+				//	print_mem(2);
+				//}
+
+			}
+if(done) break;
+			int32_t read_done = read_sync();
+			if(read_done==1){
+				if(read_tile<num_tiles)
+              			{
+					start_write = get_counter();
+					load_mem();
+#ifdef PRINT_DEBUG
+					print_mem(1);
+					printf("Update load sync()\n");
+#endif
+					update_load_sync();
+#ifdef PRINT_DEBUG
+					printf("Done:Update load sync()\n");
+					print_mem(2);
+#endif
+					// stop_write = get_counter();
+					// intvl_write += stop_write - start_write;
+				}
+				// intvl_read += stop_read - start_read;
+			}
+			
+		}
+
+		stop_tiling = get_counter();;
+		intvl_tiling = stop_tiling - start_tiling;
+		//What is this doing?
+		for(int nd = 0; nd < ndev; nd++){
+			dev = &espdevs[ndev-1];
+			iowrite32(dev, CMD_REG, 0x0);
+		}
+		printf("  Done\n");
 #ifdef MEM_DUMP
 for(int temp_i = 0; temp_i < num_tiles*tile_size; temp_i++) printf("%d\n", out[temp_i]);
 #endif
 #ifdef VALIDATE
-			printf("  validating...\n");
+		printf("  validating...\n");
 
-			/* Validation */
-			errors = validate_buf(out, gold);
-			if (errors)
-				printf("  ... FAIL\n");
-			else
-				printf("  ... PASS\n");
+		/* Validation */
+		errors = validate_buf(out, gold);
+		if (errors)
+			printf("  ... FAIL\n");
+		else
+			printf("  ... PASS\n");
 #endif
-			printf("  Tile 	Read Time: %lu\n", intvl_read		);
-			printf("  Tile Write Time: %lu\n", intvl_write		);
-			printf("  Acc   R/W  Time: %lu\n", intvl_sync		);
-			#ifdef ESP
-			#if (COH_MODE==3 || COH_MODE==2)
-				// Flush because Non Coherent DMA / LLC Coherent DMA
-			printf("  Coh  Flush Time: %lu\n", intvl_flush		);
-			#endif
-			#endif
-			printf("  Total Tile Time: %lu\n", intvl_tiling	);
-		}
-		aligned_free(out);
-		aligned_free(ptable);
-		aligned_free(mem);
-		aligned_free(gold);
-	}
+		printf("  CPU Write Time: %lu\n", intvl_write		);
+		printf("  Acc R/W   Time: %lu\n", intvl_sync		);
+		printf("  CPU Read  Time: %lu\n", intvl_read		);
+		#ifdef ESP
+		#if (COH_MODE==3 || COH_MODE==2)
+			// Flush because Non Coherent DMA / LLC Coherent DMA
+		printf("  Coh  Flush Time: %lu\n", intvl_flush		);
+		#endif
+		#endif
+		printf("  Total Tile Time: %lu\n", intvl_tiling	);
+		
+		print_mem(2);
+	
+
+	//aligned_free(out);
+	aligned_free(ptable);
+	aligned_free(mem);
+	//aligned_free(gold);
 	#endif
 
 	return 0;

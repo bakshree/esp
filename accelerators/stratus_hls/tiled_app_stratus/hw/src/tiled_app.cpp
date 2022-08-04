@@ -27,10 +27,10 @@
 #define STORE_STATE_LOAD_HANDSHAKE 4
 #define STORE_STATE_PROC_ACC_DONE 5
 
-#define STORE_STATE_LOAD_FENCE_DMA_CHL_RDY 6
-#define STORE_STATE_LOAD_FENCE_RDY 7
-#define STORE_STATE_STORE_FENCE_DMA_CHL_RDY 8
-#define STORE_STATE_STORE_FENCE_RDY 9
+#define STORE_STATE_LOAD_FENCE 6
+// #define STORE_STATE_LOAD_FENCE_RDY 7
+#define STORE_STATE_STORE_FENCE 8
+// #define STORE_STATE_STORE_FENCE_RDY 9
 
 void tiled_app::load_input()
 {
@@ -42,7 +42,7 @@ void tiled_app::load_input()
         load_state_dbg.write(0);
         load_unit_sp_write_dbg.write(0);
         input_ready.req.reset_req();
-        output_ready.ack.reset_ack();
+        load_next_tile.ack.reset_ack();
         this->reset_dma_read();
         wait();
     }
@@ -145,7 +145,9 @@ void tiled_app::load_input()
                 case LOAD_STATE_STORE_HANDSHAKE: {
                     this->load_compute_handshake();
                     wait();
-                    this->store_compute_handshake();
+                    // this->store_compute_handshake();
+
+                    this->load_next_tile_ack();
                     wait();
                     curr_tile++;
                     if(curr_tile == num_tiles) load_state = LOAD_STATE_PROC_DONE;
@@ -178,8 +180,12 @@ void tiled_app::store_output()
 	    store_iter_dbg.write(0);
         store_state_dbg.write(0);
         // store_unit_sp_read_dbg.write(0);
-        input_ready.ack.reset_ack();
-        output_ready.req.reset_req();
+        // input_ready.ack.reset_ack();
+
+        output_ready.ack.reset_ack();
+
+        load_sync_done.req.reset_req();
+        store_sync_done.req.reset_req();
         wait();
         // explicit PLM ports reset if any
         this->reset_accelerator_done();
@@ -230,7 +236,11 @@ void tiled_app::store_output()
             store_iter_dbg.write(curr_tile);
             switch(store_state){
                 case STORE_STATE_WAIT_FOR_HANDSHAKE:{
-                    this->compute_load_handshake();
+                    this->store_sync_done_req();
+                    wait();
+
+                    // this->compute_load_handshake();
+                    this->store_compute_handshake();
                     wait();
                     store_state = STORE_STATE_LOAD_SYNC;
                     // store_state = STORE_STATE_DMA_SEND;
@@ -252,28 +262,19 @@ void tiled_app::store_output()
                     // wait();
                     // while (!(this->acc_fence.ready)) wait();
                     // wait();
-                    store_state = STORE_STATE_LOAD_FENCE_DMA_CHL_RDY;
+                    store_state = STORE_STATE_LOAD_FENCE;
                 }
                 break;
 
 
-                case STORE_STATE_LOAD_FENCE_DMA_CHL_RDY:{
-                    // if(!(this->dma_write_chnl.ready)){ 
-                    //     wait();
-                    //     store_state = STORE_STATE_LOAD_FENCE_DMA_CHL_RDY; 
-                    // }
-                    // else {
-                    //     // Block till L2 to be ready to receive a fence, then send
-                    //     this->acc_fence.put(0x2);
-                    //     wait();
-                    //     store_state = STORE_STATE_LOAD_FENCE_RDY; 
-                    // }
-
-
+                case STORE_STATE_LOAD_FENCE:{
                     this->acc_fence.put(0x2);
                     wait();
                     while (!(this->acc_fence.ready)) wait();
                     wait();
+                    // this->compute_store_handshake();
+		            // wait();
+                    this->load_sync_done_req();
                     store_state = STORE_STATE_DMA_SEND;
                 }
                 break;
@@ -332,11 +333,11 @@ void tiled_app::store_output()
                     store_unit_sp_read_dbg.write(1);
                     wait();
                     while(!(this->dma_write_chnl.ready)) wait(); 
-                    store_state = STORE_STATE_STORE_FENCE_DMA_CHL_RDY;
+                    store_state = STORE_STATE_STORE_FENCE;
                 }
                 break;
 
-                case STORE_STATE_STORE_FENCE_DMA_CHL_RDY:{
+                case STORE_STATE_STORE_FENCE:{
                     // if(!(this->dma_write_chnl.ready)){ wait();
 
                     //     store_state = STORE_STATE_STORE_FENCE_DMA_CHL_RDY; }
@@ -345,8 +346,15 @@ void tiled_app::store_output()
                         this->acc_fence.put(0x2);
                         wait();
                         while(!(this->acc_fence.ready)) wait(); 
-                        store_state = STORE_STATE_LOAD_HANDSHAKE;
+                        // store_state = STORE_STATE_LOAD_HANDSHAKE;
                     // }
+
+                    curr_tile++;
+                    ping = !ping;
+                    if(curr_tile == num_tiles){
+                        store_state = STORE_STATE_PROC_ACC_DONE;
+                    }
+                    else store_state = STORE_STATE_WAIT_FOR_HANDSHAKE;
                 }
                 break;
 
@@ -358,17 +366,15 @@ void tiled_app::store_output()
                 // }
                 // break;
 
-                case STORE_STATE_LOAD_HANDSHAKE:{
-                    this->compute_store_handshake();
-		            wait();
-                    curr_tile++;
-                    ping = !ping;
-                    if(curr_tile == num_tiles){
-                        store_state = STORE_STATE_PROC_ACC_DONE;
-                    }
-                    else store_state = STORE_STATE_WAIT_FOR_HANDSHAKE;
-                }
-                break;
+                // case STORE_STATE_LOAD_HANDSHAKE:{
+                //     curr_tile++;
+                //     ping = !ping;
+                //     if(curr_tile == num_tiles){
+                //         store_state = STORE_STATE_PROC_ACC_DONE;
+                //     }
+                //     else store_state = STORE_STATE_WAIT_FOR_HANDSHAKE;
+                // }
+                // break;
                 case STORE_STATE_PROC_ACC_DONE: {
                     this->accelerator_done();
                     this->process_done();
@@ -401,9 +407,45 @@ void tiled_app::compute_kernel()
         HLS_PROTO("compute-reset");
         // this->reset_compute_kernel();
         wait();
+        input_ready.ack.reset_ack();
+        output_ready.req.reset_req();
+        load_next_tile.req.reset_req();
+
+        load_sync_done.ack.reset_ack();
+        store_sync_done.ack.reset_ack();
     }
 
+    int32_t num_tiles;
+    // int32_t tile_size;
+    // int32_t tile_no;
+    conf_info_t config;
+    {
+        HLS_PROTO("compute-config");
 
+        cfg.wait_for_config(); // config process
+        config = this->conf_info.read();
+
+        // User-defined config code
+        /* <<--local-params-->> */
+        num_tiles = config.num_tiles;
+    }
+
+    {
+        HLS_PROTO("compute-block");
+        for(int32_t b = 0; b < num_tiles; b++){
+            this->compute_load_handshake(); // Ack new input tile
+            wait();
+            this->store_sync_done_ack(); //Block till Store has finished writing previous data over DMA
+            wait();
+            this->compute_store_handshake(); //Non blocking signal to Store to resume
+            wait();
+            this->load_sync_done_ack();  //Block till Store has updated sync bit for Read tile
+            wait();
+            this->load_next_tile_req();  //Enable next iteration of input data tile
+            wait();
+        }
+
+    }
     // Conclude
     {
         this->process_done();
