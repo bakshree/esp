@@ -232,9 +232,10 @@ void tiled_app::store_output()
         // wait();
 
         bool ping = true;
-        uint32_t read_offset =  output_tile_start_offset; //64 + tile_no*tile_size; //SYNC_BITS; //0;
-        uint32_t store_offset = round_up(read_offset + tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT;
-        uint32_t offset = store_offset;
+        // uint32_t read_offset =  output_tile_start_offset; //64 + tile_no*tile_size; //SYNC_BITS; //0;
+        // uint32_t store_offset = round_up(read_offset + tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT
+        // uint32_t store_offset = round_up(output_tile_start_offset);//+ SYNC_BITS*DMA_WORD_PER_BEAT;;
+        uint32_t offset = output_tile_start_offset;
         // uint32_t sync_offset = round_up(2*tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT;
 
         uint32_t sp_offset = 0;
