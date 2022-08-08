@@ -19,32 +19,33 @@ typedef union
 {
   struct
   {
-    unsigned int r_en   : 1;
-    unsigned int r_op   : 1;
-    unsigned int r_type : 2;
-    unsigned int r_cid  : 4;
-    unsigned int w_en   : 1;
-    unsigned int w_op   : 1;
-    unsigned int w_type : 2;
-    unsigned int w_cid  : 4;
-	unsigned int reserved: 16;
+    unsigned int r_en    : 1;
+    unsigned int r_op    : 1;
+    unsigned int r_type  : 2;
+    unsigned int r_cid   : 4;
+    unsigned int w_en    : 1;
+    unsigned int w_op    : 1;
+    unsigned int w_type  : 2;
+    unsigned int w_cid   : 4;
+    unsigned int reserved: 16;
   };
   uint32_t spandex_reg;
 } spandex_config_t;
 
 
 #define NUM_DEVICES 3
-//#define PRINT_DEBUG
+// #define PRINT_DEBUG
 //#define VALIDATE
 // #define MEM_DUMP 1
-#define NUM_TILES 32
-#define TILE_SIZE 64
+#define NUM_TILES 1024
+#define TILE_SIZE 1024
 #define SLD_TILED_APP 0x033
 #define DEV_NAME "sld,tiled_app_stratus"
 #define SYNC_BITS 1
+#define SYNC_VAR_SIZE 2
 
 /* Coherence Modes */
-#define COH_MODE 3
+#define COH_MODE 0
 #define ESP
 
 #ifdef ESP
@@ -134,6 +135,13 @@ static uint64_t get_counter() {
   return counter;
 }
 
+int32_t accel_read_sync_spin_offset[NUM_DEVICES];
+int32_t accel_write_sync_spin_offset[NUM_DEVICES];
+int32_t accel_read_sync_write_offset[NUM_DEVICES];
+int32_t accel_write_sync_write_offset[NUM_DEVICES];
+int32_t input_buffer_offset[NUM_DEVICES];
+int32_t output_buffer_offset[NUM_DEVICES];
+
 uint64_t start_write;
 uint64_t stop_write;
 uint64_t intvl_write;
@@ -189,6 +197,7 @@ static unsigned in_size;
 static unsigned out_size;
 static unsigned out_offset;
 static unsigned mem_size;
+static unsigned dev_mem_size;
 
 static unsigned	int read_tile ;
 static unsigned	int write_tile;
@@ -197,6 +206,12 @@ static unsigned coherence;
 
 /* User defined registers */
 /* <<--regs-->> */
+#define TILED_APP_OUTPUT_TILE_START_OFFSET_REG 0x60
+#define TILED_APP_INPUT_TILE_START_OFFSET_REG 0x5C
+#define TILED_APP_OUTPUT_UPDATE_SYNC_OFFSET_REG 0x58
+#define TILED_APP_INPUT_UPDATE_SYNC_OFFSET_REG 0x54
+#define TILED_APP_OUTPUT_SPIN_SYNC_OFFSET_REG 0x50
+#define TILED_APP_INPUT_SPIN_SYNC_OFFSET_REG 0x4C
 #define TILED_APP_NUM_TILES_REG 0x48
 #define TILED_APP_TILE_SIZE_REG 0x44
 #define TILED_APP_RD_WR_ENABLE_REG 0x40
@@ -211,8 +226,13 @@ static inline uint32_t read_sync(){
 		spin_flush += stop_flush-start_flush;
 	#endif
 	#endif
-	void* dst = (void*)(mem);
+	// void* dst = (void*)(mem);
+	void* dst = (void*)(mem + accel_read_sync_write_offset[0]);
 	int64_t value_64 = 0;
+	#if !defined(ESP)
+	// value_64 = mem[num_dev];
+	value_64 = mem[accel_read_sync_write_offset[0]];
+	#else
 	asm volatile (
 		"mv t0, %1;"
 		".word " QU(READ_CODE) ";"
@@ -221,6 +241,7 @@ static inline uint32_t read_sync(){
 		: "r" (dst)
 		: "t0", "t1", "memory"
 	);
+	#endif
 	return (value_64 == 0);
 }
 
@@ -234,8 +255,13 @@ static inline uint32_t write_sync(){
 		spin_flush += stop_flush-start_flush;
 	#endif
 	#endif
-	void* dst = (void*)(mem+num_dev);
+	// void* dst = (void*)(mem+num_dev);
+	void* dst = (void*)(mem+accel_write_sync_write_offset[NUM_DEVICES-1]);
 	int64_t value_64 = 0;
+	#if !defined(ESP)
+	// value_64 = mem[num_dev];
+	value_64 = mem[accel_write_sync_write_offset[NUM_DEVICES-1]]; 
+	#else
 	asm volatile (
 		"mv t0, %1;"
 		".word " QU(READ_CODE) ";"
@@ -244,14 +270,21 @@ static inline uint32_t write_sync(){
 		: "r" (dst)
 		: "t0", "t1", "memory"
 	);
+	#endif
 	return (value_64 == 1);
 }
 
 static inline void update_load_sync(){
-	void* dst = (void*)(mem);
+	#ifdef PRINT_DEBUG
+	printf("Inside update load 1\n");
+	#endif
+	// void* dst = (void*)(mem);
+	void* dst = (void*)(mem+accel_read_sync_spin_offset[0]);
 	int64_t value_64 = 1;
-	#if (COH_MODE == 0) && !defined(ESP)
-	mem[0] = value_64;
+	#if !defined(ESP)
+//(COH_MODE == 0) && 
+	// mem[0] = value_64;
+	mem[accel_read_sync_spin_offset[0]] = value_64;
 	#else
 	asm volatile (
 		"mv t0, %0;"
@@ -263,8 +296,11 @@ static inline void update_load_sync(){
 	);
 	#endif
 
+	#ifdef PRINT_DEBUG
+	printf("Inside update load 2\n");
+	#endif
 	//Fence to push the write out from the write buffer
-	asm volatile ("fence rw, rw");	
+	asm volatile ("fence w, w");	
 	stop_write = get_counter();
 	intvl_write += stop_write - start_write;
 	start_sync = stop_write ; //get_counter();
@@ -277,14 +313,20 @@ static inline void update_load_sync(){
 		intvl_flush += (stop_flush - start_flush);
 		start_sync = stop_flush;
 	#endif
+	#endif
+	#ifdef PRINT_DEBUG
+	printf("Inside update load 3\n");
 	#endif
 }
 
 static inline void update_store_sync(){
-	void* dst = (void*)(mem+num_dev);
+	// void* dst = (void*)(mem+num_dev);
+	void* dst = (void*)(mem+accel_write_sync_spin_offset[NUM_DEVICES-1]);
 	int64_t value_64 = 0; //Finished reading store_tile
-	#if (COH_MODE == 0) && !defined(ESP)
-	mem[0+num_dev] = value_64;
+	#if !defined(ESP)
+//(COH_MODE == 0) && 
+	// mem[0+num_dev] = value_64
+	mem[accel_write_sync_spin_offset[NUM_DEVICES-1]] = value_64;;
 	#else
 	asm volatile (
 		"mv t0, %0;"
@@ -297,24 +339,25 @@ static inline void update_store_sync(){
 	#endif
 
 	//Fence to push the write out from the write buffer
-	asm volatile ("fence rw, rw");	
+	asm volatile ("fence w, w");	
 	stop_write = get_counter();
 	intvl_write += stop_write - start_write;
 	start_sync = stop_write ; //get_counter();
 	#ifdef ESP
 	#if (COH_MODE==3 || COH_MODE==2 )
-		// Flush because Non Coherent DMA/ LLC Coherent DMA
-		start_flush = get_counter();
-		esp_flush(coherence);
-		stop_flush = get_counter();
-		intvl_flush += (stop_flush - start_flush);
-		start_sync = stop_flush;
+	      // Flush because Non Coherent DMA/ LLC Coherent DMA
+	      start_flush = get_counter();
+	      esp_flush(coherence);
+	      stop_flush = get_counter();
+	      intvl_flush += (stop_flush - start_flush);
+	      start_sync = stop_flush;
 	#endif
 	#endif
 }
 
 static inline void load_mem(){
-	void *dst = (void*)(&mem[64]);
+	// void *dst = (void*)(&mem[64]);
+	void *dst = (void*)(&mem[input_buffer_offset[0]]);
 	#ifdef VALIDATE
 	static int64_t val_64 = 1;//23;
 	#else
@@ -324,7 +367,8 @@ static inline void load_mem(){
 	for (int j = 0; j < tile_size; j++){
 		//int64_t value_64 = gold[(read_tile)*out_words_adj + j];
 		#if (COH_MODE == 0) && !defined(ESP)
-			mem[64+j] = val_64;
+			// mem[64+j] = val_64;i
+			mem[input_buffer_offset[0] + j] =val_64; 
 		#else
 		asm volatile (
 			"mv t0, %0;"
@@ -346,23 +390,29 @@ static inline void load_mem(){
 }
 
 static inline void store_mem(){
-	void *src = (void*)(mem+64+num_dev*tile_size);
+	// void *src = (void*)(mem+64+num_dev*tile_size);
+	void *src = (void*)(mem+output_buffer_offset[NUM_DEVICES-1]);
 	// out [i] = mem[j];
 	int64_t out_val;
 #if defined(VALIDATE) || defined(MEM_DUMP)
 	int64_t curTile = write_tile*tile_size;
 #endif
 	for (int j = 0; j < tile_size; j++){
-		//int64_t value_64 = gold[(read_tile)*out_words_adj + j];
-		asm volatile (
-			"mv t0, %1;"
-			".word " QU(READ_CODE) ";"
-			"mv %0, t1"
-			: "=r" (out_val)
-			: "r" (src)
-			: "t0", "t1", "memory"
-		);//: "=r" (out[(write_tile) * out_words_adj + j])
-		src += 8;
+		//int64_t value_64 = gold[(read_tile)*out_words_adj + j]
+		#if (COH_MODE == 0) && !defined(ESP)
+			// mem[64+j] = val_64;i
+			out_val = mem[output_buffer_offset[NUM_DEVICES-1] + j]; 
+		#else
+			asm volatile (
+				"mv t0, %1;"
+				".word " QU(READ_CODE) ";"
+				"mv %0, t1"
+				: "=r" (out_val)
+				: "r" (src)
+				: "t0", "t1", "memory"
+			);//: "=r" (out[(write_tile) * out_words_adj + j])
+			src += 8;
+		#endif
 #if defined(VALIDATE) || defined(MEM_DUMP)
 		out[curTile++] = out_val; //mem[tile_size + j];
 #endif
@@ -401,7 +451,7 @@ static void init_buf (token_t *in, token_t * gold, token_t* out, int buf_size)
 	// in[1] = 0;i
 	int64_t val_64 = 0;
 	void * dst = (void*)(in);
-	for (j = 0; j < 64 + (NUM_DEVICES+1)*tile_size; j++){
+	for (j = 0; j < buf_size; j++){
 //		in[j] = 0;
 //int64_t value_64 = gold[(read_tile)*out_words_adj + j];
 		#if (COH_MODE == 0) && !defined(ESP)
@@ -459,11 +509,13 @@ inline static void print_mem(int read ){
 	else if(read == 0)
 	printf("Store Tile: %d\t||", write_tile);
 	else
-	printf("Polled Tile (%d): %d\t||", ( 64 + (NUM_DEVICES+1)*tile_size), write_tile);
+	printf("Polled Tile (%d): %d\t||", ( mem_size/8), write_tile);
 
 	int cntr = 0;
 	void* dst = (void*)(mem);
-for (int j = 0; j < 64 + (NUM_DEVICES+1)*tile_size; j++){
+	int row_boundary = accel_write_sync_spin_offset[0];
+	int n = 0;
+for (int j = 0; j < mem_size/8; j++){
 	int64_t value_64 = 0;
 	asm volatile (
 		"mv t0, %1;"
@@ -473,14 +525,21 @@ for (int j = 0; j < 64 + (NUM_DEVICES+1)*tile_size; j++){
 		: "r" (dst)
 		: "t0", "t1", "memory"
 	);
-printf("\t%d",value_64);
-		if(cntr==15){
-			printf("\n");
-			cntr = -1;
+		if(cntr == 0){
+			printf("\nInput for Accel %d : \n", n);
 		}
-		if( j>64 && ((j-64)%tile_size == 0)) printf("\n ==================================\n");
-dst += 8; 
-cntr++;
+		printf("\t%d",value_64);
+		if(cntr==SYNC_VAR_SIZE-1){
+			printf(" || ");
+		}
+		// if( j>64 && ((j-64)%tile_size == 0)) printf("\n ==================================\n");
+		if( cntr == row_boundary-1){ 
+			printf("\n ==================================\n");
+			cntr = 0;
+			n++;
+		}else cntr++;
+		dst += 8; 
+// cntr++;
 }
 
 	//int cntr = 0;
@@ -523,7 +582,7 @@ printf("ACC_COH_FULL\n");
 #endif
 #else
 //SPANDEX COHERENCE PROTOCOLS
-printf("Spandex Coherence: (%d) : ", spandex_config.spandex_reg);
+printf("Spandex Coherence: (%x) : ", spandex_config.spandex_reg);
 #if (COH_MODE == 3)
 // Owner Prediction
 printf("Owner Prediction\n");
@@ -589,8 +648,9 @@ int main(int argc, char * argv[])
 	in_size = in_len * sizeof(token_t);
 	out_size = out_len * sizeof(token_t)*num_dev;
 	out_offset  = in_len;
-	mem_size = (out_offset * sizeof(token_t)) + out_size;
-
+	//mem_size = (out_offset * sizeof(token_t)) + out_size;
+	mem_size = (NUM_DEVICES+1)*(TILE_SIZE + SYNC_VAR_SIZE)* sizeof(token_t);
+	dev_mem_size = 2*(TILE_SIZE + SYNC_VAR_SIZE)* sizeof(token_t) ;
 	// printf("Checkpoint 3\n");
 
 
@@ -599,7 +659,7 @@ int main(int argc, char * argv[])
 	// Allocate memory
 	//gold = aligned_malloc(out_size*num_tiles+10);
 	//out = aligned_malloc(out_size*num_tiles+10);
-	mem = aligned_malloc(mem_size+10);
+	mem = aligned_malloc(mem_size);
 	read_tile = 0;
 		write_tile = 0;
 		// Wait for completion
@@ -636,7 +696,8 @@ int main(int argc, char * argv[])
 			return 0;
 		}
 
-		if (ioread32(dev, PT_NCHUNK_MAX_REG) < NCHUNK(mem_size)) {
+		if (ioread32(dev, PT_NCHUNK_MAX_REG) < NCHUNK(dev_mem_size)) {
+		// if (ioread32(dev, PT_NCHUNK_MAX_REG) < NCHUNK(mem_size)) {
 			printf("  -> Not enough TLB entries available. Abort.\n");
 			return 0;
 		}
@@ -648,9 +709,13 @@ int main(int argc, char * argv[])
 		printf("  memory buffer base-address = %p\n", mem);
 
 		// Alocate and populate page table
-		ptable = aligned_malloc(NCHUNK(mem_size) * sizeof(unsigned *));
-		for (i = 0; i < NCHUNK(mem_size); i++)
-			ptable[i] = (unsigned *) &mem[i * (CHUNK_SIZE / sizeof(token_t))];
+		ptable = aligned_malloc(NCHUNK(dev_mem_size) * sizeof(unsigned *));
+		// ptable = aligned_malloc(NCHUNK(mem_size) * sizeof(unsigned *));
+		unsigned int dev_mem_layout_offset = (n*(tile_size + SYNC_VAR_SIZE)); //basically don't include input tile and input sync for previous accelerator
+		for (i = 0; i < NCHUNK(dev_mem_size); i++)
+			ptable[i] = (unsigned *) &mem[dev_mem_layout_offset  + i * (CHUNK_SIZE / sizeof(token_t))];
+		// for (i = 0; i < NCHUNK(mem_size); i++)
+			// ptable[i] = (unsigned *) &mem[i * (CHUNK_SIZE / sizeof(token_t))];
 		ptable_list[n] = ptable;
 
 		printf("  ptable = %p\n", ptable);
@@ -660,6 +725,7 @@ int main(int argc, char * argv[])
 
 		// If Spandex Caches
 #ifndef ESP
+			spandex_config.w_cid = (n+1);
 			iowrite32(dev, SPANDEX_REG, spandex_config.spandex_reg);
 #endif
 	
@@ -671,7 +737,7 @@ int main(int argc, char * argv[])
 		printf("  --------------------\n");
 		printf("  Generate input...\n");
 		init_buf(mem, gold, out, mem_size/sizeof(token_t));
-print_mem(2);
+		//print_mem(2);
 		//bmmishra3
 		asm volatile ("fence rw, rw");
 		}
@@ -694,7 +760,43 @@ print_mem(2);
 
 		// Pass accelerator-specific configuration parameters
 		/* <<--regs-config-->> */
-		iowrite32(dev, TILED_APP_NUM_TILES_REG, num_tiles+ndev-n-1);//ndev-n-
+
+		// accel_read_sync_spin_offset[n]  = n*(2*tile_size + 2*SYNC_VAR_SIZE);
+		// accel_write_sync_spin_offset[n] = n*(2*tile_size + 2*SYNC_VAR_SIZE) + tile_size + SYNC_VAR_SIZE;
+		// accel_read_sync_write_offset[n] = n*(2*tile_size + 2*SYNC_VAR_SIZE);
+		// accel_write_sync_write_offset[n]= n*(2*tile_size + 2*SYNC_VAR_SIZE) + tile_size + SYNC_VAR_SIZE;
+		// input_buffer_offset[n]  		= n*(2*tile_size + 2*SYNC_VAR_SIZE) + SYNC_VAR_SIZE;
+		// output_buffer_offset[n] 		= n*(2*tile_size + 2*SYNC_VAR_SIZE) + tile_size + 2*SYNC_VAR_SIZE;
+
+		int32_t rel_output_buffer_offset = tile_size + 2*SYNC_VAR_SIZE;
+		int32_t rel_input_buffer_offset = SYNC_VAR_SIZE;
+		int32_t rel_accel_write_sync_write_offset = tile_size + SYNC_VAR_SIZE;
+		int32_t rel_accel_read_sync_write_offset = 0;
+		int32_t rel_accel_write_sync_spin_offset = rel_accel_write_sync_write_offset;
+		int32_t rel_accel_read_sync_spin_offset = rel_accel_read_sync_write_offset;	
+
+		//debug, sync
+		accel_read_sync_spin_offset[n]  = n*(tile_size + SYNC_VAR_SIZE) + rel_accel_read_sync_spin_offset;
+		accel_write_sync_spin_offset[n] = n*(tile_size + SYNC_VAR_SIZE) + rel_accel_write_sync_spin_offset;
+		accel_read_sync_write_offset[n] = n*(tile_size + SYNC_VAR_SIZE) + rel_accel_read_sync_write_offset;
+		accel_write_sync_write_offset[n]= n*(tile_size + SYNC_VAR_SIZE) + rel_accel_write_sync_write_offset;
+		input_buffer_offset[n]  		= n*(tile_size + SYNC_VAR_SIZE) + rel_input_buffer_offset;
+		output_buffer_offset[n] 		= n*(tile_size + SYNC_VAR_SIZE) + rel_output_buffer_offset;
+
+		// iowrite32(dev, TILED_APP_OUTPUT_TILE_START_OFFSET_REG , output_buffer_offset[n]);
+		// iowrite32(dev, TILED_APP_INPUT_TILE_START_OFFSET_REG  , input_buffer_offset[n]);
+		// iowrite32(dev, TILED_APP_OUTPUT_UPDATE_SYNC_OFFSET_REG, accel_write_sync_write_offset[n]);
+		// iowrite32(dev, TILED_APP_INPUT_UPDATE_SYNC_OFFSET_REG , accel_read_sync_write_offset[n]);
+		// iowrite32(dev, TILED_APP_OUTPUT_SPIN_SYNC_OFFSET_REG  , accel_write_sync_spin_offset[n]); //
+		// iowrite32(dev, TILED_APP_INPUT_SPIN_SYNC_OFFSET_REG   , accel_read_sync_spin_offset[n]);
+
+		iowrite32(dev, TILED_APP_OUTPUT_TILE_START_OFFSET_REG , rel_output_buffer_offset);
+		iowrite32(dev, TILED_APP_INPUT_TILE_START_OFFSET_REG  , rel_input_buffer_offset);
+		iowrite32(dev, TILED_APP_OUTPUT_UPDATE_SYNC_OFFSET_REG, rel_accel_write_sync_write_offset);
+		iowrite32(dev, TILED_APP_INPUT_UPDATE_SYNC_OFFSET_REG , rel_accel_read_sync_write_offset);
+		iowrite32(dev, TILED_APP_OUTPUT_SPIN_SYNC_OFFSET_REG  , rel_accel_write_sync_spin_offset); //
+		iowrite32(dev, TILED_APP_INPUT_SPIN_SYNC_OFFSET_REG   , rel_accel_read_sync_spin_offset);
+		iowrite32(dev, TILED_APP_NUM_TILES_REG, num_tiles);//ndev-n- +ndev-n-1
 		iowrite32(dev, TILED_APP_TILE_SIZE_REG, tile_size);
 		iowrite32(dev, TILED_APP_RD_WR_ENABLE_REG, n);//device number
 
@@ -708,6 +810,7 @@ print_mem(2);
 	}
 	dev = &espdevs[ndev-1];
 		void* dst = (void*)(mem);
+		start_write = get_counter();
 		// Load 1st Tile
 //		load_mem();
 //#ifdef PRINT_DEBUG
@@ -737,8 +840,7 @@ print_mem(2);
 //#ifdef PRINT_DEBUG
 //		print_mem(2);
 //#endif
-		//start_tiling = start_write;
-		start_tiling = get_counter();
+		start_tiling = start_write;
 		intvl_read = 0;
 		while ( !done ) {
 			//printf("readtile: %d writetile: %d\n", read_tile, write_tile);
@@ -791,6 +893,7 @@ if(done) break;
 #ifdef PRINT_DEBUG
 					printf("Done:Update load sync()\n");
 					print_mem(2);
+					printf("Done:Printmen\n");
 #endif
 					// stop_write = get_counter();
 					// intvl_write += stop_write - start_write;
@@ -836,6 +939,7 @@ for(int temp_i = 0; temp_i < num_tiles*tile_size; temp_i++) printf("%d\n", out[t
 	
 
 	//aligned_free(out);
+	for(int dev_ = 0; dev_ < num_dev; dev_++) aligned_free(ptable[dev_]);
 	aligned_free(ptable);
 	aligned_free(mem);
 	//aligned_free(gold);
