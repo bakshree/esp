@@ -45,7 +45,7 @@ typedef union
 #define SYNC_VAR_SIZE 4
 
 /* Coherence Modes */
-#define COH_MODE 0
+#define COH_MODE 3
 // #define ESP
 
 #ifdef ESP
@@ -373,9 +373,9 @@ static inline void update_store_sync(){
 
 	//Fence to push the write out from the write buffer
 	asm volatile ("fence w, w");	
-	stop_write = get_counter();
-	intvl_write += stop_write - start_write;
-	start_sync = stop_write ; //get_counter();
+	stop_read = get_counter();
+	intvl_read += stop_read - start_read;
+	start_sync = stop_read ; //get_counter();
 	#ifdef ESP
 	#if (COH_MODE==3 || COH_MODE==2 )
 	      // Flush because Non Coherent DMA/ LLC Coherent DMA
@@ -715,10 +715,6 @@ int main(int argc, char * argv[])
 		// console_log_header();
 #endif
 		//load_mem(mem, gold, &read_tile); 
-		intvl_flush = 0;
-		intvl_sync = 0;
-		spin_flush = 0;
-		intvl_write = 0;
 
 
 
@@ -785,7 +781,7 @@ int main(int argc, char * argv[])
 		if(n == 0){
 		printf("  --------------------\n");
 		printf("  Generate input...\n");
-		// init_buf(mem, gold, out, mem_size/sizeof(token_t));
+		init_buf(mem, gold, out, mem_size/sizeof(token_t));
 		//print_mem(2);
 		//bmmishra3
 		asm volatile ("fence rw, rw");
@@ -859,7 +855,6 @@ int main(int argc, char * argv[])
 	}
 	dev = &espdevs[ndev-1];
 		void* dst = (void*)(mem);
-		start_write = get_counter();
 		// Load 1st Tile
 //		load_mem();
 //#ifdef PRINT_DEBUG
@@ -889,8 +884,16 @@ int main(int argc, char * argv[])
 //#ifdef PRINT_DEBUG
 //		print_mem(2);
 //#endif
-		start_tiling = start_write;
+
+		intvl_flush = 0;
+		intvl_sync = 0;
+		spin_flush = 0;
+		intvl_write = 0;
 		intvl_read = 0;
+		intvl_write = 0;
+		start_tiling = get_counter();
+		start_sync = start_tiling;
+		// start_tiling = start_write;
 		while ( !done ) {
 			//printf("readtile: %d writetile: %d\n", read_tile, write_tile);
 #ifdef PRINT_DEBUG
@@ -917,8 +920,8 @@ done = ioread32(dev, STATUS_REG);
 				start_read = get_counter();
 				store_mem();
 				update_store_sync();
-				stop_read = get_counter();
-				intvl_read += stop_read - start_read;
+				// stop_read = get_counter();
+				// intvl_read += stop_read - start_read;
 				#ifdef PRINT_DEBUG
 				print_mem(0);
 				#endif
@@ -927,11 +930,13 @@ done = ioread32(dev, STATUS_REG);
 				//}
 
 			}
-if(done) break;
+			if(done) break;
 			int32_t read_done = read_sync();
 			if(read_done==1){
-				if(read_tile<num_tiles)
-              			{
+				if(read_tile<num_tiles){
+				stop_sync = get_counter();
+				intvl_sync += stop_sync- start_sync - spin_flush;
+				spin_flush = 0;
 					start_write = get_counter();
 					load_mem();
 #ifdef PRINT_DEBUG
@@ -976,6 +981,7 @@ for(int temp_i = 0; temp_i < num_tiles*tile_size; temp_i++) printf("%d\n", out[t
 		printf("  CPU Write Time: %lu\n", intvl_write		);
 		printf("  Acc R/W   Time: %lu\n", intvl_sync		);
 		printf("  CPU Read  Time: %lu\n", intvl_read		);
+		// printf("  Spin 		Time: %lu\n", intvl_read		);;
 		#ifdef ESP
 		#if (COH_MODE==3 || COH_MODE==2)
 			// Flush because Non Coherent DMA / LLC Coherent DMA
