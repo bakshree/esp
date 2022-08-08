@@ -45,7 +45,7 @@ typedef union
 #define SYNC_VAR_SIZE 4
 
 /* Coherence Modes */
-#define COH_MODE 3
+#define COH_MODE 0
 // #define ESP
 
 #ifdef ESP
@@ -684,7 +684,7 @@ int main(int argc, char * argv[])
 	printf("Devices found:%d\n", ndev);
 	#endif
 
-	in_len = in_words_adj+64;
+	in_len = in_words_adj;//+64
 	out_len = out_words_adj;
 	in_size = in_len * sizeof(token_t);
 	out_size = out_len * sizeof(token_t)*num_dev;
@@ -753,12 +753,12 @@ int main(int argc, char * argv[])
 		#endif
 		printf("  memory buffer base-address = %p\n", mem);
 
-		// Alocate and populate page table
+		// // Alocate and populate page table
 		// ptable = aligned_malloc(NCHUNK(dev_mem_size) * sizeof(unsigned *));
-		ptable = aligned_malloc(NCHUNK(mem_size) * sizeof(unsigned *));
-		unsigned int dev_mem_layout_offset = (n*(tile_size + SYNC_VAR_SIZE)); //basically don't include input tile and input sync for previous accelerator
 		// for (i = 0; i < NCHUNK(dev_mem_size); i++)
 		// 	ptable[i] = (unsigned *) &mem[dev_mem_layout_offset  + i * (CHUNK_SIZE / sizeof(token_t))];
+		ptable = aligned_malloc(NCHUNK(mem_size) * sizeof(unsigned *));
+		unsigned int dev_mem_layout_offset = (n*(tile_size + SYNC_VAR_SIZE)); //basically don't include input tile and input sync for previous accelerator
 		for (i = 0; i < NCHUNK(mem_size); i++)
 			ptable[i] = (unsigned *) &mem[i * (CHUNK_SIZE / sizeof(token_t))];
 		ptable_list[n] = ptable;
@@ -775,7 +775,7 @@ int main(int argc, char * argv[])
 			spandex_config.w_cid = (n+2)%(NUM_DEVICES+1);
 		#endif
 		printf("Writing spandex :%d\n", spandex_config.spandex_reg);
-			iowrite32(dev, SPANDEX_REG, spandex_config.spandex_reg);
+		iowrite32(dev, SPANDEX_REG, spandex_config.spandex_reg);
 #endif
 	
 	
@@ -785,7 +785,7 @@ int main(int argc, char * argv[])
 		if(n == 0){
 		printf("  --------------------\n");
 		printf("  Generate input...\n");
-		init_buf(mem, gold, out, mem_size/sizeof(token_t));
+		// init_buf(mem, gold, out, mem_size/sizeof(token_t));
 		//print_mem(2);
 		//bmmishra3
 		asm volatile ("fence rw, rw");
