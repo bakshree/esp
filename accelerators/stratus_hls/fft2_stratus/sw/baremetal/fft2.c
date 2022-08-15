@@ -10,6 +10,98 @@
 #include <esp_probe.h>
 #include "utils/fft2_utils.h"
 
+#define NUM_DEVICES 1
+#define PRINT_DEBUG
+// #define VALIDATE
+// #define MEM_DUMP 1
+#define NUM_TILES 1
+#define TILE_SIZE 2048
+#define SYNC_BITS 1
+#define SYNC_VAR_SIZE 4
+
+const int32_t num_tiles = NUM_TILES;//12;
+const int32_t tile_size = TILE_SIZE;
+
+static unsigned	int read_tile ;
+static unsigned	int write_tile;
+
+/* Coherence Modes */
+#define COH_MODE 3
+#define ESP
+
+#ifdef ESP
+// ESP COHERENCE PROTOCOLS
+#define READ_CODE 0x0002B30B
+#define WRITE_CODE 0x0062B02B
+#if(COH_MODE == 3)
+#define COHERENCE_MODE ACC_COH_NONE
+#elif (COH_MODE == 2)
+#define COHERENCE_MODE ACC_COH_LLC
+#elif (COH_MODE == 1)
+#define COHERENCE_MODE ACC_COH_RECALL
+#else
+#define COHERENCE_MODE ACC_COH_FULL
+#endif
+#else
+//SPANDEX COHERENCE PROTOCOLS
+#define COHERENCE_MODE ACC_COH_FULL
+#if (COH_MODE == 3)
+// Owner Prediction
+#define READ_CODE 0x4002B30B
+#define WRITE_CODE 0x2262B82B
+// spandex_config_t spandex_config = {.spandex_reg = 0, .r_en = 1, .r_type = 2, .w_en = 1, .w_op = 1, .w_type = 1};
+#elif (COH_MODE == 2)
+// Write-through forwarding
+#define READ_CODE 0x4002B30B
+#define WRITE_CODE 0x2062B02B
+// spandex_config_t spandex_config = {.spandex_reg = 0, .r_en = 1, .r_type = 2, .w_en = 1, .w_type = 1};
+#elif (COH_MODE == 1)
+// Baseline Spandex
+#define READ_CODE 0x2002B30B
+#define WRITE_CODE 0x0062B02B
+// spandex_config_t spandex_config = {.spandex_reg = 0, .r_en = 1, .r_type = 1};
+#else
+// Fully Coherent MESI
+#define READ_CODE 0x0002B30B
+#define WRITE_CODE 0x0062B02B
+// spandex_config_t spandex_config = {.spandex_reg = 0};
+#endif
+#endif
+
+
+	unsigned coherence;
+int32_t accel_read_sync_spin_offset[NUM_DEVICES];
+int32_t accel_write_sync_spin_offset[NUM_DEVICES];
+int32_t accel_read_sync_write_offset[NUM_DEVICES];
+int32_t accel_write_sync_write_offset[NUM_DEVICES];
+int32_t input_buffer_offset[NUM_DEVICES];
+int32_t output_buffer_offset[NUM_DEVICES];
+int32_t num_dev = NUM_DEVICES;
+
+uint64_t start_write;
+uint64_t stop_write;
+uint64_t intvl_write;
+uint64_t start_read;
+uint64_t stop_read;
+uint64_t intvl_read;
+uint64_t start_flush;
+uint64_t stop_flush;
+uint64_t intvl_flush;
+uint64_t start_tiling;
+uint64_t stop_tiling;
+uint64_t intvl_tiling;
+uint64_t start_sync;
+uint64_t stop_sync;
+uint64_t intvl_sync;
+uint64_t spin_flush;
+
+uint64_t start_acc_write;
+uint64_t stop_acc_write;
+uint64_t intvl_acc_write;
+uint64_t start_acc_read;
+uint64_t stop_acc_read;
+uint64_t intvl_acc_read;
+
 #if (FFT2_FX_WIDTH == 64)
 typedef long long token_t;
 typedef double native_t;
@@ -25,6 +117,8 @@ typedef float native_t;
 #endif /* FFT2_FX_WIDTH */
 
 const float ERR_TH = 0.05;
+
+token_t *mem;
 
 static unsigned DMA_WORD_PER_BEAT(unsigned _st)
 {
@@ -68,6 +162,75 @@ static unsigned mem_size;
 #define FFT2_DO_SHIFT_REG 0x4c
 #define FFT2_SCALE_FACTOR_REG 0x50
 
+#define TILED_APP_OUTPUT_TILE_START_OFFSET_REG 0x70
+#define TILED_APP_INPUT_TILE_START_OFFSET_REG 0x6C
+#define TILED_APP_OUTPUT_UPDATE_SYNC_OFFSET_REG 0x68
+#define TILED_APP_INPUT_UPDATE_SYNC_OFFSET_REG 0x64
+#define TILED_APP_OUTPUT_SPIN_SYNC_OFFSET_REG 0x60
+#define TILED_APP_INPUT_SPIN_SYNC_OFFSET_REG 0x5C
+#define TILED_APP_NUM_TILES_REG 0x58
+#define TILED_APP_TILE_SIZE_REG 0x54
+
+inline static void print_mem(int read ){
+	int loc_tilesize = tile_size%1024;
+	if(read == 1)
+	printf("Read  Tile: %d\t||", read_tile);
+	else if(read == 0)
+	printf("Store Tile: %d\t||", write_tile);
+	else
+	printf("Polled Tile (%d): %d\t||", ( mem_size/8), write_tile);
+
+	int cntr = 0;
+	void* dst = (void*)(mem);
+	int row_boundary = accel_write_sync_write_offset[0];
+	int n = 0;
+	for (int j = 0; j < mem_size/8; j++){
+		int64_t value_64 = 0;
+		#if 0
+		asm volatile (
+			"mv t0, %1;"
+			".word " QU(READ_CODE) ";"
+			"mv %0, t1"
+			: "=r" (value_64)
+			: "r" (dst)
+			: "t0", "t1", "memory"
+		);
+		#endif
+		value_64 = mem[j];
+			if(cntr == 0){
+				printf("\nInput for Accel %d : \n", n);
+			}
+			printf("\t%d",value_64);
+			if(cntr==SYNC_VAR_SIZE-1){
+				printf(" || ");
+			}
+			// if( j>64 && ((j-64)%tile_size == 0)) printf("\n ==================================\n");
+			if( cntr == row_boundary-1){ 
+				printf("\n ==================================\n");
+				cntr = 0;
+				n++;
+			}else cntr++;
+			dst += 8; 
+	// cntr++;
+	}
+
+	printf("\n");
+}
+
+
+static uint64_t get_counter() {
+  uint64_t counter;
+  asm volatile (
+    "li t0, 0;"
+    "csrr t0, mcycle;"
+    "mv %0, t0"
+    : "=r" ( counter )
+    :
+    : "t0"
+  );
+
+  return counter;
+}
 
 static int validate_buf(token_t *out, float *gold)
 {
@@ -75,7 +238,7 @@ static int validate_buf(token_t *out, float *gold)
 	unsigned errors = 0;
 
 	for (j = 0; j < 2 * len; j++) {
-		native_t val = fx2float(out[j], FX_IL);
+		native_t val = fx2float(out[input_buffer_offset[NUM_DEVICES-1] + j], FX_IL);
 		uint32_t ival = *((uint32_t*)&val);
 		printf("  GOLD[%u] = 0x%08x  :  OUT[%u] = 0x%08x\n", j, ((uint32_t*)gold)[j], j, ival);
 		if ((fabs(gold[j] - val) / fabs(gold[j])) > ERR_TH)
@@ -86,6 +249,201 @@ static int validate_buf(token_t *out, float *gold)
 	return errors;
 }
 
+static inline uint32_t read_sync(){
+	#ifdef ESP
+	#if (COH_MODE==3 || COH_MODE==2 )
+		// Flush because Non Coherent DMA/ LLC Coherent DMA
+		start_flush = get_counter();
+		esp_flush(coherence);
+		stop_flush = get_counter();
+		spin_flush += stop_flush-start_flush;
+	#endif
+	#endif
+	// void* dst = (void*)(mem);
+	void* dst = (void*)(mem + accel_read_sync_write_offset[0]);
+	int64_t value_64 = 0;
+	#if 1
+	//!defined(ESP) && COH_MODE == 0
+	// value_64 = mem[num_dev];
+	value_64 = mem[accel_read_sync_write_offset[0]];
+	#else
+	asm volatile (
+		"mv t0, %1;"
+		".word " QU(READ_CODE) ";"
+		"mv %0, t1"
+		: "=r" (value_64)
+		: "r" (dst)
+		: "t0", "t1", "memory"
+	);
+	#endif
+	return (value_64 == 0);
+}
+
+
+static inline uint32_t write_sync(){
+	#ifdef ESP
+	#if 1
+	//(COH_MODE==3 || COH_MODE==2 )
+		// Flush because Non Coherent DMA/ LLC Coherent DMA
+		start_flush = get_counter();
+		esp_flush(coherence);
+		stop_flush = get_counter();
+		spin_flush += stop_flush-start_flush;
+	#endif
+	#endif
+	// void* dst = (void*)(mem+num_dev);
+	void* dst = (void*)(mem+accel_write_sync_write_offset[NUM_DEVICES-1]);
+	int64_t value_64 = 0;
+	#if 1
+	// !defined(ESP) && COH_MODE == 0
+	// value_64 = mem[num_dev];
+	value_64 = mem[accel_write_sync_write_offset[NUM_DEVICES-1]]; 
+	#else
+	asm volatile (
+		"mv t0, %1;"
+		".word " QU(READ_CODE) ";"
+		"mv %0, t1"
+		: "=r" (value_64)
+		: "r" (dst)
+		: "t0", "t1", "memory"
+	);
+	#endif
+	return (value_64 == 1);
+}
+
+
+static inline void update_load_sync(){
+	#ifdef PRINT_DEBUG
+	printf("Inside update load 1\n");
+	#endif
+	// void* dst = (void*)(mem);
+	void* dst = (void*)(mem+accel_read_sync_spin_offset[0]);
+	int64_t value_64 = 1;
+	#if 1
+	//!defined(ESP) && COH_MODE == 0
+//(COH_MODE == 0) && 
+	// mem[0] = value_64;
+	mem[accel_read_sync_spin_offset[0]] = value_64;
+	#else
+	asm volatile (
+		"mv t0, %0;"
+		"mv t1, %1;"
+		".word " QU(WRITE_CODE) 
+		: 
+		: "r" (dst), "r" (value_64)
+		: "t0", "t1", "memory"
+	);
+	#endif
+
+	#ifdef PRINT_DEBUG
+	printf("Inside update load 2\n");
+	#endif
+	//Fence to push the write out from the write buffer
+	asm volatile ("fence w, w");	
+	#ifdef PROFILE
+	stop_write = get_counter();
+	intvl_write += stop_write - start_write;
+	start_sync = stop_write ; //get_counter();
+	#endif
+	#ifdef ESP
+	#if (COH_MODE==3 || COH_MODE==2 )
+		// Flush because Non Coherent DMA/ LLC Coherent DMA
+		start_flush = get_counter();
+		esp_flush(coherence);
+		stop_flush = get_counter();
+		intvl_flush += (stop_flush - start_flush);
+		start_sync = stop_flush;
+	#endif
+	#endif
+	#ifdef PRINT_DEBUG
+	printf("Inside update load 3\n");
+	#endif
+}
+
+static inline void update_store_sync(){
+	// void* dst = (void*)(mem+num_dev);
+	void* dst = (void*)(mem+accel_write_sync_spin_offset[NUM_DEVICES-1]);
+	int64_t value_64 = 0; //Finished reading store_tile
+	#if 1
+	//!defined(ESP) && COH_MODE == 0
+//(COH_MODE == 0) && 
+	// mem[0+num_dev] = value_64
+	mem[accel_write_sync_spin_offset[NUM_DEVICES-1]] = value_64;;
+	#else
+	asm volatile (
+		"mv t0, %0;"
+		"mv t1, %1;"
+		".word " QU(WRITE_CODE) 
+		: 
+		: "r" (dst), "r" (value_64)
+		: "t0", "t1", "memory"
+	);
+	#endif
+
+	//Fence to push the write out from the write buffer
+	asm volatile ("fence w, w");
+	#ifdef PROFILE	
+	stop_read = get_counter();
+	intvl_read += stop_read - start_read;
+	start_sync = stop_read ; //get_counter();
+	#endif
+	#ifdef ESP
+	#if (COH_MODE==3 || COH_MODE==2 )
+	      // Flush because Non Coherent DMA/ LLC Coherent DMA
+	      start_flush = get_counter();
+	      esp_flush(coherence);
+	      stop_flush = get_counter();
+	      intvl_flush += (stop_flush - start_flush);
+	      start_sync = stop_flush;
+	#endif
+	#endif
+}
+
+//load_mem
+static void write_accel_input(token_t *in, float *gold){
+	// convert input to fixed point
+	for (int j = 0; j < 2 * len; j++)
+		in[input_buffer_offset[NUM_DEVICES-1]+j] = float2fx((native_t) gold[j], FX_IL);
+}
+
+//store_mem
+static inline void read_accel_output(){
+	// void *src = (void*)(mem+64+num_dev*tile_size);
+	void *src = (void*)(mem+output_buffer_offset[NUM_DEVICES-1]);
+	// out [i] = mem[j];
+	int64_t out_val;
+#if defined(VALIDATE) || defined(MEM_DUMP)
+	static int64_t curTile = 0; //write_tile*tile_size;
+#endif
+	for (int j = 0; j < tile_size; j++){
+		//int64_t value_64 = gold[(read_tile)*out_words_adj + j]
+		#if 1
+		// ((COH_MODE == 0) && !defined(ESP))
+			// mem[64+j] = val_64;i
+			out_val = mem[output_buffer_offset[NUM_DEVICES-1] + j]; 
+		#else
+			asm volatile (
+				"mv t0, %1;"
+				".word " QU(READ_CODE) ";"
+				"mv %0, t1"
+				: "=r" (out_val)
+				: "r" (src)
+				: "t0", "t1", "memory"
+			);//: "=r" (out[(write_tile) * out_words_adj + j])
+			src += 8;
+		#endif
+#if defined(VALIDATE) || defined(MEM_DUMP)
+		// out[curTile++] = out_val; //mem[tile_size + j];
+#endif
+	}
+
+#if defined(VALIDATE) || defined(MEM_DUMP)
+		printf("%d ", out_val);
+		printf("\n");
+#endif	
+	asm volatile ("fence rw, rw");
+	// write_tile++;
+}
 
 static void init_buf(token_t *in, float *gold)
 {
@@ -102,9 +460,9 @@ static void init_buf(token_t *in, float *gold)
 		printf("  IN[%u] = 0x%08x\n", j, ig);
 	}
 
-	// convert input to fixed point
-	for (j = 0; j < 2 * len; j++)
-		in[j] = float2fx((native_t) gold[j], FX_IL);
+	// // convert input to fixed point
+	// for (j = 0; j < 2 * len; j++)
+	// 	in[j] = float2fx((native_t) gold[j], FX_IL);
 
 	// Compute golden output
 	fft2_comp(gold, num_ffts, num_samples, logn_samples, do_inverse, do_shift);
@@ -121,10 +479,11 @@ int main(int argc, char * argv[])
 	unsigned done;
 	unsigned spin_ct;
 	unsigned **ptable = NULL;
-	token_t *mem;
+	unsigned tile_size = 2*len;
+	// token_t *mem;
 	float *gold;
 	unsigned errors = 0;
-	unsigned coherence;
+	// unsigned coherence;
         const float ERROR_COUNT_TH = 0.001;
 
 	len = num_ffts * (1 << logn_samples);
@@ -136,8 +495,8 @@ int main(int argc, char * argv[])
 		in_words_adj = round_up(2 * len, DMA_WORD_PER_BEAT(sizeof(token_t)));
 		out_words_adj = round_up(2 * len, DMA_WORD_PER_BEAT(sizeof(token_t)));
 	}
-	in_len = in_words_adj;
-	out_len = out_words_adj;
+	in_len = in_words_adj + SYNC_VAR_SIZE;
+	out_len = out_words_adj + SYNC_VAR_SIZE;
 	in_size = in_len * sizeof(token_t);
 	out_size = out_len * sizeof(token_t);
 	out_offset  = 0;
@@ -183,13 +542,13 @@ int main(int argc, char * argv[])
 		printf("  ptable = %p\n", ptable);
 		printf("  nchunk = %lu\n", NCHUNK(mem_size));
 
-#ifndef __riscv
-		for (coherence = ACC_COH_NONE; coherence <= ACC_COH_FULL; coherence++) {
-#else
+// #ifndef __riscv
+// 		for (coherence = ACC_COH_NONE; coherence <= ACC_COH_FULL; coherence++) {
+// #else
 		{
 			/* TODO: Restore full test once ESP caches are integrated */
-			coherence = ACC_COH_NONE;
-#endif
+			coherence = COHERENCE_MODE;
+// #endif
 			printf("  --------------------\n");
 			printf("  Generate input...\n");
 			init_buf(mem, gold);
@@ -213,6 +572,30 @@ int main(int argc, char * argv[])
 
 			// Pass accelerator-specific configuration parameters
 			/* <<--regs-config-->> */
+			int32_t rel_input_buffer_offset = SYNC_VAR_SIZE;
+			int32_t rel_output_buffer_offset = rel_input_buffer_offset; //tile_size + 2*SYNC_VAR_SIZE;
+			int32_t rel_accel_write_sync_write_offset = 2;//tile_size + SYNC_VAR_SIZE;
+			int32_t rel_accel_read_sync_write_offset = 0;
+			int32_t rel_accel_write_sync_spin_offset = rel_accel_write_sync_write_offset;//+2
+			int32_t rel_accel_read_sync_spin_offset = rel_accel_read_sync_write_offset;	//+2
+
+			//debug, sync
+			accel_read_sync_spin_offset[n]  = n*(tile_size + SYNC_VAR_SIZE) + rel_accel_read_sync_spin_offset;
+			accel_write_sync_spin_offset[n] = n*(tile_size + SYNC_VAR_SIZE) + rel_accel_write_sync_spin_offset;
+			accel_read_sync_write_offset[n] = n*(tile_size + SYNC_VAR_SIZE) + rel_accel_read_sync_write_offset;
+			accel_write_sync_write_offset[n]= n*(tile_size + SYNC_VAR_SIZE) + rel_accel_write_sync_write_offset;
+			input_buffer_offset[n]  		= n*(tile_size + SYNC_VAR_SIZE) + rel_input_buffer_offset;
+			output_buffer_offset[n] 		= n*(tile_size + SYNC_VAR_SIZE) + rel_output_buffer_offset;
+			
+			iowrite32(dev, TILED_APP_OUTPUT_TILE_START_OFFSET_REG , output_buffer_offset[n]);
+			iowrite32(dev, TILED_APP_INPUT_TILE_START_OFFSET_REG  , input_buffer_offset[n]);
+			iowrite32(dev, TILED_APP_OUTPUT_UPDATE_SYNC_OFFSET_REG, accel_write_sync_write_offset[n]);
+			iowrite32(dev, TILED_APP_INPUT_UPDATE_SYNC_OFFSET_REG , accel_read_sync_write_offset[n]);
+			iowrite32(dev, TILED_APP_OUTPUT_SPIN_SYNC_OFFSET_REG  , accel_write_sync_spin_offset[n]); //
+			iowrite32(dev, TILED_APP_INPUT_SPIN_SYNC_OFFSET_REG   , accel_read_sync_spin_offset[n]);
+			iowrite32(dev, TILED_APP_NUM_TILES_REG, num_tiles);//ndev-n- +ndev-n-1
+			iowrite32(dev, TILED_APP_TILE_SIZE_REG, tile_size);
+			
 			iowrite32(dev, FFT2_LOGN_SAMPLES_REG, logn_samples);
 			iowrite32(dev, FFT2_NUM_FFTS_REG, num_ffts);
 			iowrite32(dev, FFT2_SCALE_FACTOR_REG, scale_factor);
@@ -226,12 +609,34 @@ int main(int argc, char * argv[])
 			printf("  Start...\n");
 			iowrite32(dev, CMD_REG, CMD_MASK_START);
 
+			write_accel_input(mem, gold);
+			update_load_sync();
+			printf("  Start...22\n");
+
 			// Wait for completion
 			done = 0;
 			spin_ct = 0;
 			while (!done) {
 				done = ioread32(dev, STATUS_REG);
 				done &= STATUS_MASK_DONE;
+				int32_t store_done = write_sync();
+				#ifdef PRINT_DEBUG
+					printf("Done: %d store_done:%d spin_cnt:%d\n", done, store_done, spin_ct);
+				#endif
+				if(store_done==1 ){
+					#ifdef PROFILE
+					stop_sync = get_counter();
+					intvl_sync += stop_sync- start_sync - spin_flush;
+					spin_flush = 0;
+					start_read = get_counter();
+					#endif
+					// store_mem();
+					read_accel_output();
+					update_store_sync();
+					#ifdef PRINT_DEBUG
+					print_mem(0);
+					#endif
+				}
 				spin_ct++;
 			}
 			iowrite32(dev, CMD_REG, 0x0);

@@ -32,6 +32,105 @@
 #define STORE_STATE_STORE_FENCE 8
 // #define STORE_STATE_STORE_FENCE_RDY 9
 
+// void tiled_app::input_sync_spin(){
+//    // Reset
+//     {
+//         HLS_PROTO("input-spin-reset");
+//         this->reset_dma_input_sync_read();
+//         this->input_sync_ready.req.reset_req();
+//         wait();
+//     }
+//     int32_t input_spin_sync_offset   ; 
+//     int32_t num_tiles;
+//     conf_info_t config; 
+//     {
+//         HLS_PROTO("input-spin-config");
+
+//         cfg.wait_for_config(); // config process
+//         config = this->conf_info.read();
+
+//         // User-defined config code
+//         /* <<--local-params-->> */
+//         input_spin_sync_offset  = config.input_spin_sync_offset   ;
+//         num_tiles = config.num_tiles;
+//     }
+
+//     {
+//         HLS_PROTO("input-spin-dma");
+//         for(int32_t b = 0; b < num_tiles; b++){
+//             int64_t data = 0;
+//             while(data == 0){
+//                 sc_dt::sc_bv<DMA_WIDTH> dataBvin;
+//                 dma_info_t dma_info2(input_spin_sync_offset, 1, DMA_SIZE);
+//                 this->dma_input_sync_read_ctrl.put(dma_info2);
+//                 wait();
+//                 dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_input_sync_read_chnl.get();
+//                 wait();
+//                 data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
+//                 wait();
+//             //if(data == 1) load_state = LOAD_STATE_READ_DMA; //LOAD_STATE_INIT_DMA;
+//             }
+//             wait();
+//             input_sync_ready.req.req();
+
+//             //add a handshake to resume sync spinning
+//         }
+//     }
+
+//     {
+//         this->process_done();
+//     }
+// }
+
+// void tiled_app::output_sync_spin(){
+//    // Reset
+//     {
+//         HLS_PROTO("output-spin-reset");
+//         this->reset_dma_output_sync_read();
+//         this->output_sync_ready.req.reset_req();
+//         wait();
+//     }
+//     int32_t num_tiles; 
+//     int32_t output_spin_sync_offset  ;
+//     conf_info_t config; 
+//     {
+//         HLS_PROTO("output-spin-config");
+
+//         cfg.wait_for_config(); // config process
+//         config = this->conf_info.read();
+
+//         // User-defined config code
+//         /* <<--local-params-->> */
+//         output_spin_sync_offset = config.output_spin_sync_offset  ;
+//         num_tiles = config.num_tiles;
+//     }
+
+
+//     {
+//         HLS_PROTO("output-spin-dma");
+//         for(int32_t b = 0; b < num_tiles; b++){
+//             int64_t data = 0;
+//             while(data == 0){
+//                 sc_dt::sc_bv<DMA_WIDTH> dataBvin;
+//                 dma_info_t dma_info2(input_spin_sync_offset, 1, DMA_SIZE);
+//                 this->dma_output_sync_read_ctrl.put(dma_info2);
+//                 wait();
+//                 dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_output_sync_read_chnl.get();
+//                 wait();
+//                 data = dataBvin.range(DMA_WIDTH - 1, 0).to_int64();
+//                 wait();
+//             //if(data == 1) load_state = LOAD_STATE_READ_DMA; //LOAD_STATE_INIT_DMA;
+//             }
+//             wait();
+//             output_sync_ready.req.req();
+//         }
+//     }
+
+//     {
+//         this->process_done();
+//     }
+// }
+
 void tiled_app::load_input()
 {
 
@@ -43,12 +142,17 @@ void tiled_app::load_input()
         load_unit_sp_write_dbg.write(0);
         input_ready.req.reset_req();
         load_next_tile.ack.reset_ack();
+        // input_sync_ready.ack.reset_ack();
+
         this->reset_dma_read();
         wait();
     }
 
     // Config
     /* <<--params-->> */
+    int32_t input_tile_start_offset;
+    int32_t output_spin_sync_offset  ;
+    int32_t input_spin_sync_offset   ;
     int32_t num_tiles;
     int32_t tile_size;
     int32_t tile_no;
@@ -61,9 +165,12 @@ void tiled_app::load_input()
 
         // User-defined config code
         /* <<--local-params-->> */
+        output_spin_sync_offset = config.output_spin_sync_offset  ;
+        input_spin_sync_offset  = config.input_spin_sync_offset   ;
         num_tiles = config.num_tiles;
         tile_size = config.tile_size;
         tile_no = config.rd_wr_enable;
+        input_tile_start_offset = config.input_tile_start_offset;
     }
    
     // Load
@@ -73,9 +180,9 @@ void tiled_app::load_input()
 	    int64_t load_state = LOAD_STATE_WAIT_FOR_INPUT_SYNC;
         bool ping = true;
         int32_t curr_tile = 0;
-        uint32_t offset = 64 + tile_no*tile_size; //SYNC_BITS; //0;
+        uint32_t offset = input_tile_start_offset; //64 + tile_no*tile_size; //SYNC_BITS; //0;
         uint32_t sp_offset = 0;
-        uint32_t sync_offset = tile_no; //2*tile_size;
+        // uint32_t sync_offset = tile_no; //2*tile_size;
         uint32_t length = tile_size; // round_up(tile_size, DMA_WORD_PER_BEAT);
         // uint32_t read = 0;
         while(true){
@@ -86,7 +193,7 @@ void tiled_app::load_input()
                 case LOAD_STATE_WAIT_FOR_INPUT_SYNC: {
                     int64_t data = 0;
                     sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-                    dma_info_t dma_info2(sync_offset, 1, DMA_SIZE);
+                    dma_info_t dma_info2(input_spin_sync_offset, 1, DMA_SIZE);
                     this->dma_read_ctrl.put(dma_info2);
                     wait();
                     dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
@@ -95,6 +202,8 @@ void tiled_app::load_input()
                     wait();
                     if(data == 1) load_state = LOAD_STATE_READ_DMA; //LOAD_STATE_INIT_DMA;
                     else load_state = LOAD_STATE_WAIT_FOR_INPUT_SYNC;
+                    // input_sync_ready.ack.ack();
+                    // load_state = LOAD_STATE_WAIT_FOR_INPUT_SYNC; 
                 }
                 break;
         
@@ -126,12 +235,13 @@ void tiled_app::load_input()
                         load_unit_sp_write_dbg.write(dataBv.range( DATA_WIDTH - 1, 0).to_int64()); 
                     }
                     load_state = LOAD_STATE_STORE_SYNC;
+                    // load_state = LOAD_STATE_STORE_HANDSHAKE;
                 }
                 break;
                 case LOAD_STATE_STORE_SYNC: {
                     int64_t data = 0;
                     sc_dt::sc_bv<DMA_WIDTH> dataBvin;
-                    dma_info_t dma_info2(sync_offset+1, 1, DMA_SIZE);
+                    dma_info_t dma_info2(output_spin_sync_offset, 1, DMA_SIZE); //sync_offset+1
                     this->dma_read_ctrl.put(dma_info2);
                     wait();
                     dataBvin.range(DMA_WIDTH - 1, 0) = this->dma_read_chnl.get();
@@ -197,6 +307,9 @@ void tiled_app::store_output()
 
     // Config
     /* <<--params-->> */
+    int32_t output_tile_start_offset;
+    int32_t output_update_sync_offset;
+    int32_t input_update_sync_offset ;
     int32_t num_tiles;
     int32_t tile_size;
     int32_t tile_no;
@@ -209,6 +322,9 @@ void tiled_app::store_output()
 
         // User-defined config code
         /* <<--local-params-->> */
+        output_tile_start_offset = config.output_tile_start_offset;
+        output_update_sync_offset = config.output_update_sync_offset;
+        input_update_sync_offset  = config.input_update_sync_offset ;
         num_tiles = config.num_tiles;
         tile_size = config.tile_size;
         tile_no = config.rd_wr_enable;
@@ -220,13 +336,14 @@ void tiled_app::store_output()
         // wait();
 
         bool ping = true;
-        uint32_t read_offset =  64 + tile_no*tile_size; //SYNC_BITS; //0;
-        uint32_t store_offset = round_up(read_offset + tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT;
-        uint32_t offset = store_offset;
+        int32_t curr_tile = 0;
+        // uint32_t read_offset =  output_tile_start_offset; //64 + tile_no*tile_size; //SYNC_BITS; //0;
+        // uint32_t store_offset = round_up(read_offset + tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT
+        // uint32_t store_offset = round_up(output_tile_start_offset);//+ SYNC_BITS*DMA_WORD_PER_BEAT;;
+        uint32_t offset = output_tile_start_offset;
         // uint32_t sync_offset = round_up(2*tile_size, DMA_WORD_PER_BEAT);//+ SYNC_BITS*DMA_WORD_PER_BEAT;
 
         uint32_t sp_offset = 0;
-        int32_t curr_tile = 0;
         uint32_t length = tile_size;
         uint32_t store_state = STORE_STATE_WAIT_FOR_HANDSHAKE;
 
@@ -239,6 +356,7 @@ void tiled_app::store_output()
                     this->store_sync_done_req();
                     wait();
 
+                    // this->load_next_tile.req.reset_req();
                     // this->compute_load_handshake();
                     this->store_compute_handshake();
                     wait();
@@ -249,7 +367,7 @@ void tiled_app::store_output()
                 case STORE_STATE_LOAD_SYNC: {
                     sc_dt::sc_bv<DMA_WIDTH> dataBvSync;
                     dataBvSync.range(DATA_WIDTH - 1, 0) = 0;
-                    dma_info_t dma_info_sync(tile_no, 1, DMA_SIZE);// sync location
+                    dma_info_t dma_info_sync(input_update_sync_offset, 1, DMA_SIZE);//tile_no sync location
                     this->dma_write_ctrl.put(dma_info_sync);
                     wait();
                     this->dma_write_chnl.put(dataBvSync);
@@ -275,6 +393,9 @@ void tiled_app::store_output()
                     // this->compute_store_handshake();
 		            // wait();
                     this->load_sync_done_req();
+		            wait();
+                    //direct handshake to load
+                    // this->load_next_tile.req.req();
                     store_state = STORE_STATE_DMA_SEND;
                 }
                 break;
@@ -304,9 +425,9 @@ void tiled_app::store_output()
                         // if(i==len) dataBv.range(DATA_WIDTH - 1, 0) = 2;
                         // else {
                             if (ping)
-                                dataBv.range(DATA_WIDTH - 1, 0) = plm_in_ping[sp_offset + i];
+                                dataBv.range(DATA_WIDTH - 1, 0) = plm_out_ping[sp_offset + i];
                             else
-                                dataBv.range(DATA_WIDTH - 1, 0) = plm_in_pong[sp_offset + i];
+                                dataBv.range(DATA_WIDTH - 1, 0) = plm_out_pong[sp_offset + i];
                             wait();
                             // store_unit_sp_read_dbg.write(plm_in_ping[sp_offset + i]);
                         // }
@@ -324,7 +445,7 @@ void tiled_app::store_output()
                 
                     sc_dt::sc_bv<DMA_WIDTH> dataBvSync;
                     dataBvSync.range(DATA_WIDTH - 1, 0) = 1;
-                    dma_info_t dma_info_sync(tile_no+1, 1, DMA_SIZE);//next sync location
+                    dma_info_t dma_info_sync(output_update_sync_offset, 1, DMA_SIZE);//tile_no+1 next sync location
                     wait();
                     this->dma_write_ctrl.put(dma_info_sync);
                     wait();
@@ -416,7 +537,7 @@ void tiled_app::compute_kernel()
     }
 
     int32_t num_tiles;
-    // int32_t tile_size;
+    int32_t tile_size;
     // int32_t tile_no;
     conf_info_t config;
     {
@@ -428,13 +549,66 @@ void tiled_app::compute_kernel()
         // User-defined config code
         /* <<--local-params-->> */
         num_tiles = config.num_tiles;
+        tile_size = config.tile_size;
     }
 
     {
         HLS_PROTO("compute-block");
+        bool ping = true;
         for(int32_t b = 0; b < num_tiles; b++){
             this->compute_load_handshake(); // Ack new input tile
             wait();
+            int len = tile_size>2048?2048:tile_size; 
+            // if(ping){
+                for(int32_t t = 0; t< len; t++){ 
+                    HLS_UNROLL_LOOP(OFF);
+                    HLS_BREAK_DEP(plm_in_ping);
+                    HLS_BREAK_DEP(plm_out_ping);
+                    wait();
+
+                    int64_t data; 
+                    if(ping){
+                        wait();
+                        data = plm_in_ping[t];
+                        wait();
+                        plm_out_ping[t] = data;
+                        wait();
+                    }
+                    else{
+                        wait();
+                        data = plm_in_pong[t];
+                        wait();
+                        plm_out_pong[t] = data;
+                        wait();
+
+                    }
+                }
+            // }
+            // else{
+                // int64_t data;
+                // for(int32_t t = 0; t< tile_size; t++){ 
+                //     // HLS_UNROLL_LOOP(OFF);
+                //     // HLS_BREAK_DEP(plm_in_pong);
+                //     // HLS_BREAK_DEP(plm_out_pong);
+                //     data = plm_in_pong[t]; 
+                //     wait();
+                //     plm_out_pong[t] = data; 
+                //     wait();
+                // }
+            // }
+            wait();
+            // // this->store_sync_done_ack(); //Block till Store has finished writing previous data over DMA
+            // // wait();
+            // this->compute_store_handshake(); //Non blocking signal to Store to resume
+            // wait();
+            // // this->load_sync_done_ack();  //Block till Store has updated sync bit for Read tile
+            // // wait();
+            // // // this->store_sync_done_ack(); //Block till Store has finished writing previous data over DMA
+            // // // wait();
+            // // this->load_next_tile_req();  //Enable next iteration of input data tile
+            // // wait();
+
+
             this->store_sync_done_ack(); //Block till Store has finished writing previous data over DMA
             wait();
             this->compute_store_handshake(); //Non blocking signal to Store to resume
@@ -443,6 +617,7 @@ void tiled_app::compute_kernel()
             wait();
             this->load_next_tile_req();  //Enable next iteration of input data tile
             wait();
+            ping = !ping;
         }
 
     }

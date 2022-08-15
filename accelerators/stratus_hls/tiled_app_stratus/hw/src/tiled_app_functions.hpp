@@ -47,3 +47,29 @@ inline void tiled_app::load_next_tile_ack()
 
     load_next_tile.ack.ack();
 }
+
+// inline void tiled_app::reset_dma_input_sync_read()
+// {
+//     dma_input_sync_read_ctrl.reset();
+//     dma_input_sync_read_chnl.reset();
+// }
+
+// inline void tiled_app::reset_dma_output_sync_read()
+// {
+//     dma_output_sync_read_ctrl.reset();
+//     dma_output_sync_read_chnl.reset();
+// }
+
+
+// inline void tiled_app::reset_dma_input_sync_write()
+// {
+//     dma_input_sync_write_ctrl.reset();
+//     dma_input_sync_write_chnl.reset();
+// }
+
+
+// inline void tiled_app::reset_dma_output_sync_write()
+// {
+//     dma_output_sync_write_ctrl.reset();
+//     dma_output_sync_write_chnl.reset();
+// }
