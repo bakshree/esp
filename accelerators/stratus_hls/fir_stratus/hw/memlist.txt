@@ -1,0 +1,8 @@
+fir_plm_block_in_dma32 1024 64 1w:0r 0w:1r
+fir_plm_block_out_dma32 1024 64 1w:0r 0w:1r
+fir_plm_block_filter_wts_dma32 16384 64 1w:0r 0w:1r
+fir_plm_block_super_twiddle_dma32 1024 64 1w:0r 0w:1r
+fir_plm_block_in_dma64 1024 64 1w:0r 0w:1r
+fir_plm_block_out_dma64 1024 64 1w:0r 0w:1r
+fir_plm_block_filter_wts_dma64 16384 64 1w:0r 0w:1r
+fir_plm_block_super_twiddle_dma64 1024 64 1w:0r 0w:1r

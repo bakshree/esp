@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sld>
+  <accelerator name="fir" desc="Accelerator FIR" data_size="4" device_id="144" hls_tool="stratus_hls">
+    <param name="data_length" desc="data_length" />
+  </accelerator>
+</sld>
