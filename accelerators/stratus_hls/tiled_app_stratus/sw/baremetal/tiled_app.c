@@ -37,7 +37,7 @@ typedef union
 // #define PRINT_DEBUG
 // #define VALIDATE
 // #define MEM_DUMP 1
-#define NUM_TILES 1200
+#define NUM_TILES 1024
 #define TILE_SIZE 1024
 #define SLD_TILED_APP 0x033
 #define DEV_NAME "sld,tiled_app_stratus"
@@ -45,7 +45,7 @@ typedef union
 #define SYNC_VAR_SIZE 4
 
 /* Coherence Modes */
-#define COH_MODE 3
+#define COH_MODE 2
 // #define ESP
 
 #ifdef ESP
@@ -418,7 +418,7 @@ static inline void load_mem(){
 		// val_64++;
 #endif
 	}
-	asm volatile ("fence rw, rw");
+	asm volatile ("fence w, w");
 	read_tile += 1;
 }
 
@@ -455,7 +455,7 @@ static inline void store_mem(){
 		printf("%d ", out_val);
 		printf("\n");
 #endif	
-	asm volatile ("fence rw, rw");
+	asm volatile ("fence w, w");
 	write_tile++;
 }
 
@@ -835,6 +835,16 @@ int main(int argc, char * argv[])
 		iowrite32(dev, TILED_APP_OUTPUT_SPIN_SYNC_OFFSET_REG  , accel_write_sync_spin_offset[n]); //
 		iowrite32(dev, TILED_APP_INPUT_SPIN_SYNC_OFFSET_REG   , accel_read_sync_spin_offset[n]);
 
+		printf("Accel: %d\n", n);
+		printf("TILED_APP_OUTPUT_TILE_START_OFFSET_REG : %d\n", output_buffer_offset[n]        );
+		printf("TILED_APP_INPUT_TILE_START_OFFSET_REG  : %d\n", input_buffer_offset[n]         );
+		printf("TILED_APP_OUTPUT_UPDATE_SYNC_OFFSET_REG: %d\n", accel_write_sync_write_offset[n]);
+		printf("TILED_APP_INPUT_UPDATE_SYNC_OFFSET_REG : %d\n", accel_read_sync_write_offset[n]);
+		printf("TILED_APP_OUTPUT_SPIN_SYNC_OFFSET_REG  : %d\n", accel_write_sync_spin_offset[n]);
+		printf("TILED_APP_INPUT_SPIN_SYNC_OFFSET_REG   : %d\n", accel_read_sync_spin_offset[n] );
+		printf("\n");
+
+
 		// iowrite32(dev, TILED_APP_OUTPUT_TILE_START_OFFSET_REG , rel_output_buffer_offset);
 		// iowrite32(dev, TILED_APP_INPUT_TILE_START_OFFSET_REG  , rel_input_buffer_offset);
 		// iowrite32(dev, TILED_APP_OUTPUT_UPDATE_SYNC_OFFSET_REG, rel_accel_write_sync_write_offset);
@@ -853,6 +863,15 @@ int main(int argc, char * argv[])
 		iowrite32(dev, CMD_REG, CMD_MASK_START);
 
 	}
+
+	printf("CPU read offset: %d\n", output_buffer_offset[NUM_DEVICES-1]);
+	printf("CPU read sync offset: %d\n", accel_write_sync_spin_offset[NUM_DEVICES-1]);
+	printf("CPU write offset: %d\n", input_buffer_offset[0]);
+	printf("CPU write sync offset: %d\n", accel_read_sync_spin_offset[0]);
+
+
+
+
 	dev = &espdevs[ndev-1];
 		void* dst = (void*)(mem);
 		// Load 1st Tile
